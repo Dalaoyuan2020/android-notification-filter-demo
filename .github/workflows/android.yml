@@ -27,8 +27,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Android SDK
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Verify runner Android SDK
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
       - name: Rule checks
         run: |
           mkdir -p build/rule-tests
