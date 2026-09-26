@@ -16,3 +16,4 @@
 | 2026-09-27 | P9a 完成 | 新建四幕原生动画教程、手势/概率示意与真实组件缩略图；首次 Launcher 判断、完成/跳过回首页、我的重播；独立本地完成标志。编译/lint/279 纯 Java；模拟器首次/二次启动、四幕、重播通过，动画开/关可显示，后两幕完整首屏 | onboarding_activity、onboarding_scene_view、MainActivity、Manifest | 固定示例仅教程，不写日志/记忆/网络；无真机结论。下一步 P9b |
 | 2026-09-27 | P9b 完成 | 左右滑/纵滚判别、短切幕动画及旧回调取消；末幕隐藏跳过；重播关闭/返回且不改完成标记，首幕返回不算完成。编译/lint/279 纯 Java；模拟器首次中断、完成/未完成状态下重播、旋转保幕、横滑与关闭动画连续切幕通过 | MainActivity、onboarding_activity | 教程 MVP 已跑通；无真机结论。下一步 P10 |
 | 2026-09-27 | P10 完成 | 实际父宽限宽、配置页安全区/IME、窄屏概率列、首页紧凑留白、文件夹/便签原生轻触反馈。编译/lint/279 纯 Java；360/393/412dp、1.3字体、横屏/键盘模拟器通过；360dp大字体 HTTPS 注意力82项通过（清数据后监听连接超时一次，重置授权恢复） | cap_frame、Main/ModelSettings/Attention/onboarding、folder/pinned_note/home/messages UI | 仅模拟器验证；最终打包与发布待P11。下一步 P11 |
+| 2026-09-27 | P11 本地验收完成 | filter 版本4/0.4.0；最终两APK/两模块lint/testAPK构建成功，279纯Java与209模拟器检查（82注意力+109模型+18通知）通过；保留v0.3签名，sender二进制与v0.3一致；最终只读工程/功能审查无阻断 | filter/build.gradle | GitHub Actions与Release发布在本阶段继续执行；未做真机/真实模型服务验证；用户MODEL_TESTING改动未提交 |
