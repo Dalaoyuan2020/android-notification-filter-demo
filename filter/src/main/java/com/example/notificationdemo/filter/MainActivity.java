@@ -59,6 +59,10 @@ public final class MainActivity extends Activity {
     private FrameLayout pageHost;
     private bottom_navigation_view bottomNavigation;
     private int selectedPage = -1;
+    private String messageFilter = notification_ui_data.FILTER_ALL;
+    private home_page_view homePage;
+    private TextView messageFilterLabel;
+    private Button allLogsButton;
 
     private TextView permissionValue;
     private TextView connectionValue;
@@ -136,9 +140,14 @@ public final class MainActivity extends Activity {
     }
 
     private void buildHomePage() {
-        LinearLayout content = buildPage(PAGE_HOME, "首页", "留下重要消息，让通知栏清爽一点。");
-        makeStatusCard(content);
-        addPrivacyNote(content);
+        LinearLayout content = buildPage(PAGE_HOME, "", "");
+        homePage = new home_page_view(this);
+        homePage.setServiceAction(view -> {
+            switchPage(PAGE_PROFILE, true);
+            pages[PAGE_PROFILE].post(() -> pages[PAGE_PROFILE].scrollTo(0, 0));
+        });
+        homePage.setFolderAction((folder, filter) -> openMessages(filter));
+        content.addView(homePage, fullWidth());
     }
 
     private void buildMessagesPage() {
@@ -153,7 +162,8 @@ public final class MainActivity extends Activity {
     }
 
     private void buildProfilePage() {
-        LinearLayout content = buildPage(PAGE_PROFILE, "我的", "设置通知处理范围与关键词规则。");
+        LinearLayout content = buildPage(PAGE_PROFILE, "我的", "管理通知权限、处理范围与关键词规则。");
+        makeStatusCard(content);
         makeRulesCard(content);
         addPrivacyNote(content);
     }
@@ -181,14 +191,16 @@ public final class MainActivity extends Activity {
         content.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
                 dp(ui_theme.PAGE_MARGIN), dp(24));
         frame.addView(content, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
-        TextView heading = text(title, ui_theme.TITLE_SP, INK, true);
-        if (Build.VERSION.SDK_INT >= 28) {
-            heading.setAccessibilityHeading(true);
+        if (!title.isEmpty()) {
+            TextView heading = text(title, ui_theme.TITLE_SP, INK, true);
+            if (Build.VERSION.SDK_INT >= 28) {
+                heading.setAccessibilityHeading(true);
+            }
+            content.addView(heading);
+            addSpace(content, 8);
+            content.addView(text(description, 14, MUTED, false));
+            addSpace(content, 26);
         }
-        content.addView(heading);
-        addSpace(content, 8);
-        content.addView(text(description, 14, MUTED, false));
-        addSpace(content, 26);
         return content;
     }
 
@@ -235,10 +247,24 @@ public final class MainActivity extends Activity {
 
     private void readPageState(Bundle state) {
         int[] savedPositions = state == null ? null : state.getIntArray("page_scroll_positions");
+        String savedFilter = state == null ? null : state.getString("message_filter");
+        if (notification_ui_data.FILTER_IMPORTANT.equals(savedFilter)
+                || notification_ui_data.FILTER_LATER.equals(savedFilter)
+                || notification_ui_data.FILTER_FILTERED.equals(savedFilter)) {
+            messageFilter = savedFilter;
+        }
         for (int i = 0; i < pages.length; i++) {
             scrollPositions[i] = savedPositions != null && i < savedPositions.length ? Math.max(0, savedPositions[i]) : 0;
             restoreScroll[i] = true;
         }
+    }
+
+    private void openMessages(String filter) {
+        messageFilter = notification_ui_data.normalizeFilter(filter);
+        renderLogs(DemoStore.getLogs(this));
+        switchPage(PAGE_MESSAGES, true);
+        scrollPositions[PAGE_MESSAGES] = 0;
+        pages[PAGE_MESSAGES].post(() -> pages[PAGE_MESSAGES].scrollTo(0, 0));
     }
 
     private void switchPage(int requested, boolean animate) {
@@ -434,6 +460,12 @@ public final class MainActivity extends Activity {
         heading.addView(clear, new LinearLayout.LayoutParams(-2, dp(44)));
         card.addView(heading);
         addSpace(card, 8);
+        messageFilterLabel = text("", 12, MUTED, false);
+        card.addView(messageFilterLabel, fullWidth());
+        allLogsButton = button("查看全部通知记录", false);
+        allLogsButton.setOnClickListener(view -> openMessages(notification_ui_data.FILTER_ALL));
+        card.addView(allLogsButton, fullWidth());
+        addSpace(card, 8);
         logCount = text("", 12, MUTED, false);
         card.addView(logCount);
         addSpace(card, 12);
@@ -479,7 +511,10 @@ public final class MainActivity extends Activity {
                 + "\n近期行为摘要：" + (attention.recentBehaviorEnabled ? "开启" : "关闭")
                 + " · 独立事件上传：" + (attention.uploadEnabled ? "开启" : "关闭")
                 + (modelConfig.storageError.isEmpty() ? "" : "\n密钥存储不可用，请进入配置页检查。"));
-        renderLogs();
+        JSONArray entries = DemoStore.getLogs(this);
+        long now = System.currentTimeMillis();
+        homePage.update(granted, connected, notification_ui_data.snapshot(entries, now), now);
+        renderLogs(entries);
     }
 
     private static boolean allowsAutomatic(ModelConfig config) {
@@ -491,8 +526,11 @@ public final class MainActivity extends Activity {
         return profile.label.isEmpty() ? "未命名配置" : profile.label;
     }
 
-    private void renderLogs() {
-        JSONArray entries = DemoStore.getLogs(this);
+    private void renderLogs(JSONArray allEntries) {
+        JSONArray entries = notification_ui_data.filter(allEntries, messageFilter);
+        boolean filtered = !notification_ui_data.FILTER_ALL.equals(messageFilter);
+        messageFilterLabel.setText(notification_ui_data.filterLabel(messageFilter) + " · " + notification_ui_data.GROUPING_NOTE);
+        allLogsButton.setVisibility(filtered ? View.VISIBLE : View.GONE);
         int count = entries.length();
         logCount.setText(count == 0 ? "最新记录显示在最上方 · 仅保存在本机"
                 : "共 " + count + " 条 · 最新在上" + (count > MAX_VISIBLE_LOGS ? " · 展示最近 " + MAX_VISIBLE_LOGS + " 条" : ""));
@@ -502,11 +540,12 @@ public final class MainActivity extends Activity {
             empty.setPadding(dp(16), dp(23), dp(16), dp(23));
             empty.setGravity(Gravity.CENTER);
             empty.setBackground(background(BACKGROUND, 12, 0));
-            TextView title = text("等待第一条通知", 15, INK, true);
+            TextView title = text(filtered ? "暂无该分类记录" : "等待第一条通知", 15, INK, true);
             title.setGravity(Gravity.CENTER);
             empty.addView(title);
             addSpace(empty, 7);
-            TextView hint = text("开启使用权，然后打开测试发送器。\n也可以重新扫描通知栏中已有的通知。", 12, MUTED, false);
+            TextView hint = text(filtered ? "当前分类没有留存记录，可查看全部通知记录。"
+                    : "前往“我的”开启使用权并打开测试发送器。\n也可以从“我的”重新扫描现有通知。", 12, MUTED, false);
             hint.setGravity(Gravity.CENTER);
             empty.addView(hint);
             logList.addView(empty, fullWidth());
@@ -731,6 +770,7 @@ public final class MainActivity extends Activity {
         outState.putString("keepWords", keepWords.getText().toString());
         outState.putString("blockWords", blockWords.getText().toString());
         outState.putInt("selected_page", selectedPage < 0 ? PAGE_HOME : selectedPage);
+        outState.putString("message_filter", messageFilter);
         int[] currentScroll = scrollPositions.clone();
         for (int i = 0; i < pages.length; i++) {
             if (pages[i] != null && !restoreScroll[i]) {
