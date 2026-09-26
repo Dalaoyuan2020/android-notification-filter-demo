@@ -232,7 +232,8 @@ public final class MainActivity extends Activity {
                 panel = makeAdvancedPanel();
                 break;
             case my_page_view.GUIDE:
-                startActivity(new Intent(this, onboarding_activity.class));
+                startActivity(new Intent(this, onboarding_activity.class)
+                        .putExtra(onboarding_activity.EXTRA_REPLAY, true));
                 overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
                 return;
             case my_page_view.ABOUT:

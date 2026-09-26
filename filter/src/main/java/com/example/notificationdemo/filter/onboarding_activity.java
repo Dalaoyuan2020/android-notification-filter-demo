@@ -7,7 +7,9 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -18,6 +20,7 @@ import android.widget.TextView;
 /** Four illustrative scenes. Completion is independent of notification and model preferences. */
 public final class onboarding_activity extends Activity {
     public static final String EXTRA_RETURN_HOME = "com.example.notificationdemo.filter.GUIDE_HOME";
+    public static final String EXTRA_REPLAY = "com.example.notificationdemo.filter.GUIDE_REPLAY";
     private static final String PREFERENCES = "onboarding_v040";
     private static final String COMPLETED = "completed";
     private static final String[] TITLES = {
@@ -36,13 +39,17 @@ public final class onboarding_activity extends Activity {
     private int step;
     private boolean resumed;
     private boolean leaving;
+    private boolean replayMode;
+    private long transitionGeneration;
     private TextView title;
     private TextView description;
     private TextView progress;
     private final View[] progressMarks = new View[4];
     private Button previous;
     private Button next;
+    private Button skip;
     private ScrollView scroll;
+    private LinearLayout pageContent;
     private onboarding_scene_view scene;
     private android.window.OnBackInvokedCallback backCallback;
 
@@ -55,6 +62,8 @@ public final class onboarding_activity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         step = state == null ? 0 : Math.max(0, Math.min(3, state.getInt("guide_step", 0)));
+        replayMode = state == null ? getIntent().getBooleanExtra(EXTRA_REPLAY, false)
+                : state.getBoolean("guide_replay", false);
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(ui_theme.PAPER);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
@@ -83,19 +92,20 @@ public final class onboarding_activity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(22), dp(4), dp(14), 0);
         header.addView(text("Attention", 20, ui_theme.INK, true), new LinearLayout.LayoutParams(0, -2, 1));
-        Button skip = quietButton("跳过");
-        skip.setContentDescription("跳过引导，进入首页");
+        skip = quietButton(replayMode ? "关闭" : "跳过");
+        skip.setContentDescription(replayMode ? "关闭教程，返回应用" : "跳过引导，进入首页");
         skip.setOnClickListener(view -> finishGuide());
         header.addView(skip, new LinearLayout.LayoutParams(-2, -2));
         root.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        scroll = new ScrollView(this);
+        scroll = new tutorial_scroll_view(this);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setFillViewport(true);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         paper_frame frame = new paper_frame(this);
         scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout content = new LinearLayout(this);
+        pageContent = content;
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(22), dp(10), dp(22), dp(12));
         frame.addView(content, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
@@ -123,18 +133,21 @@ public final class onboarding_activity extends Activity {
         progressRow.addView(progress, new LinearLayout.LayoutParams(0, -2, 1));
         Button replay = quietButton("重播本幕");
         replay.setOnClickListener(view -> {
+            cancelPageTransition();
+            bindPage(false);
             scroll.smoothScrollTo(0, Math.max(0, scene.getTop() - dp(12)));
             scene.replay();
         });
         progressRow.addView(replay, new LinearLayout.LayoutParams(-2, -2));
         controls.addView(progressRow, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout marks = new LinearLayout(this);
+        marks.setGravity(Gravity.CENTER);
         for (int i = 0; i < progressMarks.length; i++) {
             View mark = new View(this);
             mark.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            LinearLayout.LayoutParams markPosition = new LinearLayout.LayoutParams(0, dp(4), 1);
+            LinearLayout.LayoutParams markPosition = new LinearLayout.LayoutParams(dp(6), dp(6));
             if (i != progressMarks.length - 1) {
-                markPosition.rightMargin = dp(6);
+                markPosition.rightMargin = dp(7);
             }
             marks.addView(mark, markPosition);
             progressMarks[i] = mark;
@@ -177,23 +190,49 @@ public final class onboarding_activity extends Activity {
     }
 
     private void showStep(int requested, boolean animate) {
-        step = Math.max(0, Math.min(3, requested));
-        title.setText(TITLES[step]);
-        description.setText(DESCRIPTIONS[step]);
+        if (leaving) return;
+        int destination = Math.max(0, Math.min(3, requested));
+        int direction = destination >= step ? 1 : -1;
+        boolean changed = destination != step;
+        cancelPageTransition();
+        scene.stopAnimations();
+        step = destination;
         progress.setText("第 " + (step + 1) + " 幕 / 共 4 幕");
         previous.setEnabled(step > 0);
-        next.setText(step == 3 ? "开始使用" : "下一幕");
+        skip.setVisibility(step == 3 ? View.INVISIBLE : View.VISIBLE);
+        next.setText(step == 3 ? (replayMode ? "返回应用" : "开始使用") : "下一幕");
         for (int i = 0; i < progressMarks.length; i++) {
             progressMarks[i].setBackground(ui_theme.shape(this,
-                    i <= step ? ui_theme.ACCENT : ui_theme.BORDER, 2, 0));
+                    i == step ? ui_theme.INK : ui_theme.BORDER, 3, 0));
+            LinearLayout.LayoutParams position = (LinearLayout.LayoutParams) progressMarks[i].getLayoutParams();
+            position.width = dp(i == step ? 24 : 6);
+            progressMarks[i].setLayoutParams(position);
         }
-        scene.showScene(step, animate && resumed);
-        scroll.post(() -> scroll.scrollTo(0, 0));
-        next.animate().cancel();
-        next.setAlpha(1);
-        next.setScaleX(1);
-        next.setScaleY(1);
-        if (animate && step == 3 && android.animation.ValueAnimator.areAnimatorsEnabled()) {
+        boolean motion = animate && changed && resumed && android.animation.ValueAnimator.areAnimatorsEnabled();
+        long generation = transitionGeneration;
+        if (motion) {
+            pageContent.animate().translationX(dp(-24 * direction)).alpha(0).setDuration(110)
+                    .withEndAction(() -> {
+                        if (generation != transitionGeneration || leaving || !resumed) return;
+                        bindPage(true);
+                        scroll.scrollTo(0, 0);
+                        pageContent.setTranslationX(dp(24 * direction));
+                        pageContent.setAlpha(0);
+                        pageContent.animate().translationX(0).alpha(1).setDuration(150)
+                                .withEndAction(() -> {
+                                    if (generation == transitionGeneration) {
+                                        pageContent.setAlpha(1);
+                                        pageContent.setTranslationX(0);
+                                    }
+                                }).start();
+                    }).start();
+        } else {
+            bindPage(animate && resumed);
+            scroll.post(() -> {
+                if (generation == transitionGeneration) scroll.scrollTo(0, 0);
+            });
+        }
+        if (motion && step == 3) {
             next.setAlpha(0);
             next.setScaleX(0.95f);
             next.setScaleY(0.95f);
@@ -201,11 +240,38 @@ public final class onboarding_activity extends Activity {
         }
     }
 
+    private void bindPage(boolean animateScene) {
+        title.setText(TITLES[step]);
+        description.setText(DESCRIPTIONS[step]);
+        scene.showScene(step, animateScene);
+    }
+
+    /** Cancelling an entrance must leave the current controls and content fully visible. */
+    private void cancelPageTransition() {
+        transitionGeneration++;
+        pageContent.animate().withEndAction(null).setListener(null).cancel();
+        pageContent.setAlpha(1);
+        pageContent.setTranslationX(0);
+        pageContent.setTranslationY(0);
+        pageContent.setScaleX(1);
+        pageContent.setScaleY(1);
+        next.animate().withEndAction(null).setListener(null).cancel();
+        next.setAlpha(1);
+        next.setTranslationX(0);
+        next.setTranslationY(0);
+        next.setScaleX(1);
+        next.setScaleY(1);
+    }
+
     private void finishGuide() {
         if (leaving) return;
         leaving = true;
+        cancelPageTransition();
         scene.stopAnimations();
-        getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().putBoolean(COMPLETED, true).apply();
+        // Replay is read-only even if the original installation has never completed this guide.
+        if (!replayMode) {
+            getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().putBoolean(COMPLETED, true).apply();
+        }
         Intent home = new Intent(this, MainActivity.class)
                 .putExtra(EXTRA_RETURN_HOME, true)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -217,8 +283,14 @@ public final class onboarding_activity extends Activity {
     private void goBack() {
         if (step > 0) {
             showStep(step - 1, true);
-        } else {
+        } else if (replayMode) {
             finishGuide();
+        } else {
+            // System Back is an interruption, not the explicit Skip/Start completion action.
+            leaving = true;
+            cancelPageTransition();
+            scene.stopAnimations();
+            finish();
         }
     }
 
@@ -233,18 +305,21 @@ public final class onboarding_activity extends Activity {
 
     @Override protected void onPause() {
         resumed = false;
+        cancelPageTransition();
         scene.setMotionEnabled(false);
-        next.animate().cancel();
+        bindPage(false);
         super.onPause();
     }
 
     @Override protected void onSaveInstanceState(Bundle outState) {
         outState.putInt("guide_step", step);
+        outState.putBoolean("guide_replay", replayMode);
         outState.putInt("guide_scroll", scroll.getScrollY());
         super.onSaveInstanceState(outState);
     }
 
     @Override protected void onDestroy() {
+        cancelPageTransition();
         scene.stopAnimations();
         if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
@@ -265,6 +340,64 @@ public final class onboarding_activity extends Activity {
         button.setMinimumHeight(dp(48));
         button.setPadding(dp(10), dp(8), dp(10), dp(8));
         return button;
+    }
+
+    /** Horizontal paging is confined to the illustration/body, never the navigation buttons. */
+    private final class tutorial_scroll_view extends ScrollView {
+        private final int touchSlop;
+        private float downX;
+        private float downY;
+        private boolean horizontal;
+        private boolean vertical;
+        private boolean multiplePointers;
+
+        tutorial_scroll_view(Context context) {
+            super(context);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        }
+
+        @Override public boolean dispatchTouchEvent(MotionEvent event) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                downX = event.getX();
+                downY = event.getY();
+                horizontal = false;
+                vertical = false;
+                multiplePointers = false;
+            } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
+                multiplePointers = true;
+            }
+            float deltaX = event.getX() - downX;
+            float deltaY = event.getY() - downY;
+            if (action == MotionEvent.ACTION_MOVE && !multiplePointers && !horizontal && !vertical) {
+                if (Math.abs(deltaY) > touchSlop && Math.abs(deltaY) >= Math.abs(deltaX)) {
+                    vertical = true;
+                } else if (Math.abs(deltaX) > touchSlop && Math.abs(deltaX) > Math.abs(deltaY) * 1.5f) {
+                    horizontal = true;
+                    MotionEvent cancel = MotionEvent.obtain(event);
+                    cancel.setAction(MotionEvent.ACTION_CANCEL);
+                    super.dispatchTouchEvent(cancel);
+                    cancel.recycle();
+                    getParent().requestDisallowInterceptTouchEvent(true);
+                }
+            }
+            if (horizontal) {
+                if (action == MotionEvent.ACTION_UP) {
+                    if (!multiplePointers && Math.abs(deltaX) >= dp(64)
+                            && Math.abs(deltaX) > Math.abs(deltaY) * 1.5f) {
+                        int destination = step + (deltaX < 0 ? 1 : -1);
+                        if (destination >= 0 && destination <= 3) showStep(destination, true);
+                    }
+                    horizontal = false;
+                    getParent().requestDisallowInterceptTouchEvent(false);
+                } else if (action == MotionEvent.ACTION_CANCEL) {
+                    horizontal = false;
+                    getParent().requestDisallowInterceptTouchEvent(false);
+                }
+                return true;
+            }
+            return super.dispatchTouchEvent(event);
+        }
     }
 
     private static final class paper_frame extends FrameLayout {
