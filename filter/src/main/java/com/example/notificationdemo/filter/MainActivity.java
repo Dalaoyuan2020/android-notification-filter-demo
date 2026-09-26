@@ -15,7 +15,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
-import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,7 +23,6 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -32,10 +30,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONArray;
-import org.json.JSONObject;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.Locale;
 
 /** Small, dependency-free UI for testing the system notification listener. */
@@ -48,7 +43,6 @@ public final class MainActivity extends Activity {
     private static final int SOFT_TEAL = ui_theme.SOFT_GREEN;
     private static final int AMBER = ui_theme.WARNING;
     private static final int SOFT_AMBER = ui_theme.SOFT_YELLOW;
-    private static final int MAX_VISIBLE_LOGS = 80;
     private static final int PAGE_HOME = 0;
     private static final int PAGE_MESSAGES = 1;
     private static final int PAGE_INTELLIGENCE = 2;
@@ -61,25 +55,21 @@ public final class MainActivity extends Activity {
     private int selectedPage = -1;
     private String messageFilter = notification_ui_data.FILTER_ALL;
     private home_page_view homePage;
-    private TextView messageFilterLabel;
-    private Button allLogsButton;
+    private messages_page_view messagesPage;
 
     private TextView permissionValue;
     private TextView connectionValue;
     private TextView modeValue;
     private TextView modeDescription;
-    private TextView logCount;
     private TextView saveFeedback;
     private TextView strategySummary;
     private Switch autoSwitch;
     private EditText targets;
     private EditText keepWords;
     private EditText blockWords;
-    private LinearLayout logList;
     private boolean receiverRegistered;
     private boolean updatingSwitch;
     private int sectionIndex;
-    private final SimpleDateFormat timeFormat = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA);
     private final BroadcastReceiver changes = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             refreshState();
@@ -115,7 +105,9 @@ public final class MainActivity extends Activity {
         pageHost = new FrameLayout(this);
         pageHost.setFocusableInTouchMode(true);
         pageHost.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
-        root.addView(pageHost, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout.LayoutParams hostPosition = new FrameLayout.LayoutParams(-1, -1);
+        hostPosition.bottomMargin = dp(98); // Default 76dp bar + 14dp bottom margin + 8dp gap.
+        root.addView(pageHost, hostPosition);
         readPageState(savedInstanceState);
         // All four pages are created exactly once before refreshing their shared state.
         // Keeping their native views alive also keeps unsaved rule edits between tabs.
@@ -141,6 +133,7 @@ public final class MainActivity extends Activity {
 
     private void buildHomePage() {
         LinearLayout content = buildPage(PAGE_HOME, "", "");
+        content.setPadding(dp(ui_theme.PAGE_MARGIN), dp(20), dp(ui_theme.PAGE_MARGIN), dp(24));
         homePage = new home_page_view(this);
         homePage.setServiceAction(view -> {
             switchPage(PAGE_PROFILE, true);
@@ -151,8 +144,15 @@ public final class MainActivity extends Activity {
     }
 
     private void buildMessagesPage() {
-        LinearLayout content = buildPage(PAGE_MESSAGES, "消息", "查看通知的真实判断与处理记录。");
-        makeLogsCard(content);
+        LinearLayout content = buildPage(PAGE_MESSAGES, "", "");
+        messagesPage = new messages_page_view(this);
+        messagesPage.setOnFilterSelectedListener(this::openMessages);
+        messagesPage.setOnClearLogsListener(view -> {
+            DemoStore.clearLogs(this);
+            refreshState();
+            toast("本机验证记录与短时注意力记录已清空");
+        });
+        content.addView(messagesPage, fullWidth());
     }
 
     private void buildIntelligencePage() {
@@ -171,11 +171,9 @@ public final class MainActivity extends Activity {
     private LinearLayout buildPage(int index, String title, String description) {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setSaveEnabled(false);
         scroll.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
-        scroll.setPadding(0, 0, 0, dp(104));
         scroll.setVisibility(View.GONE);
         pages[index] = scroll;
         pageHost.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
@@ -236,11 +234,14 @@ public final class MainActivity extends Activity {
         position.bottomMargin = dp(14);
         root.addView(bottomNavigation, position);
         bottomNavigation.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-            int reserved = bottomNavigation.getHeight() + dp(28);
-            for (ScrollView page : pages) {
-                if (page != null && page.getPaddingBottom() != reserved) {
-                    page.setPadding(0, 0, 0, reserved);
-                }
+            // Reserve the actual viewport, so accessibility/focus scrolling cannot target
+            // content hidden behind the floating bar. Root padding already handles insets.
+            FrameLayout.LayoutParams barPosition = (FrameLayout.LayoutParams) bottomNavigation.getLayoutParams();
+            int reserved = bottomNavigation.getHeight() + barPosition.bottomMargin + dp(8);
+            FrameLayout.LayoutParams hostPosition = (FrameLayout.LayoutParams) pageHost.getLayoutParams();
+            if (hostPosition.bottomMargin != reserved) {
+                hostPosition.bottomMargin = reserved;
+                pageHost.setLayoutParams(hostPosition);
             }
         });
     }
@@ -261,7 +262,7 @@ public final class MainActivity extends Activity {
 
     private void openMessages(String filter) {
         messageFilter = notification_ui_data.normalizeFilter(filter);
-        renderLogs(DemoStore.getLogs(this));
+        messagesPage.render(DemoStore.getLogs(this), messageFilter);
         switchPage(PAGE_MESSAGES, true);
         scrollPositions[PAGE_MESSAGES] = 0;
         pages[PAGE_MESSAGES].post(() -> pages[PAGE_MESSAGES].scrollTo(0, 0));
@@ -442,37 +443,6 @@ public final class MainActivity extends Activity {
         card.addView(saveFeedback);
     }
 
-    private void makeLogsCard(LinearLayout parent) {
-        LinearLayout card = card(parent);
-        LinearLayout heading = row();
-        heading.addView(text("05  验证记录", ui_theme.SECTION_SP, INK, true),
-                new LinearLayout.LayoutParams(0, -2, 1));
-        Button clear = button("清空", false);
-        clear.setTextSize(12);
-        clear.setMinWidth(0);
-        clear.setMinimumWidth(0);
-        clear.setPadding(dp(14), dp(6), dp(14), dp(6));
-        clear.setOnClickListener(view -> {
-            DemoStore.clearLogs(this);
-            refreshState();
-            toast("本机验证记录已清空");
-        });
-        heading.addView(clear, new LinearLayout.LayoutParams(-2, dp(44)));
-        card.addView(heading);
-        addSpace(card, 8);
-        messageFilterLabel = text("", 12, MUTED, false);
-        card.addView(messageFilterLabel, fullWidth());
-        allLogsButton = button("查看全部通知记录", false);
-        allLogsButton.setOnClickListener(view -> openMessages(notification_ui_data.FILTER_ALL));
-        card.addView(allLogsButton, fullWidth());
-        addSpace(card, 8);
-        logCount = text("", 12, MUTED, false);
-        card.addView(logCount);
-        addSpace(card, 12);
-        logList = column();
-        card.addView(logList, fullWidth());
-    }
-
     private void refreshState() {
         if (permissionValue == null) return;
         boolean granted = hasNotificationAccess();
@@ -514,7 +484,7 @@ public final class MainActivity extends Activity {
         JSONArray entries = DemoStore.getLogs(this);
         long now = System.currentTimeMillis();
         homePage.update(granted, connected, notification_ui_data.snapshot(entries, now), now);
-        renderLogs(entries);
+        messagesPage.render(entries, messageFilter);
     }
 
     private static boolean allowsAutomatic(ModelConfig config) {
@@ -524,180 +494,6 @@ public final class MainActivity extends Activity {
 
     private static String profileLabel(ModelConfig.Profile profile) {
         return profile.label.isEmpty() ? "未命名配置" : profile.label;
-    }
-
-    private void renderLogs(JSONArray allEntries) {
-        JSONArray entries = notification_ui_data.filter(allEntries, messageFilter);
-        boolean filtered = !notification_ui_data.FILTER_ALL.equals(messageFilter);
-        messageFilterLabel.setText(notification_ui_data.filterLabel(messageFilter) + " · " + notification_ui_data.GROUPING_NOTE);
-        allLogsButton.setVisibility(filtered ? View.VISIBLE : View.GONE);
-        int count = entries.length();
-        logCount.setText(count == 0 ? "最新记录显示在最上方 · 仅保存在本机"
-                : "共 " + count + " 条 · 最新在上" + (count > MAX_VISIBLE_LOGS ? " · 展示最近 " + MAX_VISIBLE_LOGS + " 条" : ""));
-        logList.removeAllViews();
-        if (count == 0) {
-            LinearLayout empty = column();
-            empty.setPadding(dp(16), dp(23), dp(16), dp(23));
-            empty.setGravity(Gravity.CENTER);
-            empty.setBackground(background(BACKGROUND, 12, 0));
-            TextView title = text(filtered ? "暂无该分类记录" : "等待第一条通知", 15, INK, true);
-            title.setGravity(Gravity.CENTER);
-            empty.addView(title);
-            addSpace(empty, 7);
-            TextView hint = text(filtered ? "当前分类没有留存记录，可查看全部通知记录。"
-                    : "前往“我的”开启使用权并打开测试发送器。\n也可以从“我的”重新扫描现有通知。", 12, MUTED, false);
-            hint.setGravity(Gravity.CENTER);
-            empty.addView(hint);
-            logList.addView(empty, fullWidth());
-            return;
-        }
-        for (int i = 0; i < Math.min(count, MAX_VISIBLE_LOGS); i++) {
-            JSONObject entry = entries.optJSONObject(i);
-            if (entry == null) continue;
-            LinearLayout item = column();
-            item.setPadding(dp(13), dp(13), dp(13), dp(13));
-            item.setBackground(background(BACKGROUND, 12, 0));
-            LinearLayout top = row();
-            String action = entry.optString("action", "记录");
-            boolean warning = action.contains("清除") || action.contains("未确认");
-            top.addView(chip(action, warning ? AMBER : TEAL, warning ? SOFT_AMBER : SOFT_TEAL));
-            TextView time = text(timeFormat.format(new Date(entry.optLong("time", 0))), 11, MUTED, false);
-            time.setGravity(Gravity.END);
-            top.addView(time, new LinearLayout.LayoutParams(0, -2, 1));
-            item.addView(top);
-            addSpace(item, 9);
-            TextView source = text(entry.optString("pkg", "未知来源"), 11, MUTED, false);
-            source.setTextIsSelectable(true);
-            item.addView(source);
-            String title = entry.optString("title", "").trim();
-            String body = entry.optString("text", "").trim();
-            addSpace(item, 6);
-            TextView titleView = text(title.isEmpty() ? "（无标题）" : title, 15, INK, true);
-            titleView.setTextIsSelectable(true);
-            item.addView(titleView);
-            if (!body.isEmpty()) {
-                addSpace(item, 4);
-                TextView bodyView = text(body, 13, INK, false);
-                bodyView.setTextIsSelectable(true);
-                item.addView(bodyView);
-            }
-            addSpace(item, 9);
-            item.addView(text("原因 · " + entry.optString("reason", "无说明"), 12, MUTED, false));
-            JSONArray modelResults = entry.optJSONArray("models");
-            if (modelResults != null && modelResults.length() > 0) {
-                renderModelResults(item, modelResults, entry.optString("comparison", ""));
-            }
-            logList.addView(item, fullWidth());
-            if (i < Math.min(count, MAX_VISIBLE_LOGS) - 1) addSpace(logList, 10);
-        }
-    }
-
-    private void renderModelResults(LinearLayout parent, JSONArray results, String comparison) {
-        addSpace(parent, 12);
-        if (!comparison.isEmpty()) {
-            parent.addView(text("路线结论 · " + comparison, 12, INK, true));
-            addSpace(parent, 8);
-        }
-        renderProbabilityOverview(parent, results);
-        addSpace(parent, 8);
-        HorizontalScrollView scroll = new HorizontalScrollView(this);
-        scroll.setHorizontalScrollBarEnabled(true);
-        LinearLayout columns = row();
-        columns.setGravity(Gravity.TOP);
-        scroll.addView(columns, new HorizontalScrollView.LayoutParams(-2, -2));
-        for (int i = 0; i < Math.min(3, results.length()); i++) {
-            JSONObject model = results.optJSONObject(i);
-            if (model == null) continue;
-            LinearLayout box = column();
-            box.setPadding(dp(12), dp(12), dp(12), dp(12));
-            box.setBackground(background(ui_theme.SHEET, 10, BORDER));
-            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(218), -2);
-            size.setMarginEnd(dp(8));
-            columns.addView(box, size);
-            box.addView(text(model.optString("label", "模型路线"), 14, INK, true));
-            addSpace(box, 5);
-            box.addView(text(model.optString("model", "") + "\n" + model.optString("protocol", ""), 11, MUTED, false));
-            addSpace(box, 10);
-            double original = model.optDouble("p_jev", Double.NaN);
-            double fused = model.optDouble("p_final", Double.NaN);
-            String arrow = "＝";
-            int probabilityColor = MUTED;
-            if (Double.isFinite(original) && Double.isFinite(fused)) {
-                double difference = fused - original;
-                arrow = difference > 0.05 ? "↑" : difference < -0.05 ? "↓" : "＝";
-                probabilityColor = difference > 0.05 ? TEAL : difference < -0.05 ? AMBER : INK;
-            }
-            box.addView(text("p_jev " + probability(original) + "\n→ p_final " + probability(fused) + "  " + arrow,
-                    15, probabilityColor, true));
-            if (!model.optBoolean("has_probability", false) && model.optBoolean("success", false)) {
-                addSpace(box, 5);
-                box.addView(text("无原始概率 · 由 choice 换算", 11, AMBER, false));
-            }
-            addSpace(box, 10);
-            String action = model.optString("action", "");
-            String decision = "KEEP".equals(action) ? "保留" : "REMOVE".equals(action) ? "建议清除" : "未完成";
-            boolean success = model.optBoolean("success", false);
-            box.addView(text((success ? decision : "请求失败 · 保留") + " · "
-                    + model.optLong("latency_ms", 0) + " ms", 12, success ? TEAL : AMBER, true));
-            addSpace(box, 7);
-            box.addView(text(success ? model.optString("reason", "") : model.optString("error", "无详细错误"),
-                    11, MUTED, false));
-        }
-        parent.addView(scroll, fullWidth());
-    }
-
-    private void renderProbabilityOverview(LinearLayout parent, JSONArray results) {
-        LinearLayout overview = row();
-        overview.setGravity(Gravity.TOP);
-        int count = Math.min(3, results.length());
-        for (int i = 0; i < count; i++) {
-            JSONObject model = results.optJSONObject(i);
-            if (model == null) {
-                continue;
-            }
-            LinearLayout box = column();
-            box.setPadding(dp(6), dp(9), dp(6), dp(9));
-            box.setBackground(background(ui_theme.SHEET, 8, BORDER));
-            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
-            if (i < count - 1) {
-                size.setMarginEnd(dp(4));
-            }
-            overview.addView(box, size);
-            addOverviewLine(box, model.optString("label", "模型路线"), 12, INK, true);
-            addSpace(box, 7);
-            boolean success = model.optBoolean("success", false);
-            boolean hasProbability = model.optBoolean("has_probability", false);
-            addOverviewLine(box, success && !hasProbability ? "choice 换算" : "p_jev", 11, MUTED, false);
-            double original = model.optDouble("p_jev", Double.NaN);
-            double fused = model.optDouble("p_final", Double.NaN);
-            addOverviewLine(box, probability(original), 12, INK, true);
-            String arrow = "＝";
-            int color = INK;
-            if (Double.isFinite(original) && Double.isFinite(fused)) {
-                double difference = fused - original;
-                arrow = difference > 0.05 ? "↑" : difference < -0.05 ? "↓" : "＝";
-                color = difference > 0.05 ? TEAL : difference < -0.05 ? AMBER : INK;
-            }
-            addSpace(box, 5);
-            addOverviewLine(box, arrow + " p_final", 11, color, false);
-            addOverviewLine(box, probability(fused), 12, color, true);
-            addSpace(box, 7);
-            addOverviewLine(box, model.optLong("latency_ms", 0) + " ms", 11, MUTED, false);
-            String action = model.optString("action", "KEEP");
-            addOverviewLine(box, success ? action : "失败 · KEEP", 11, success ? TEAL : AMBER, true);
-        }
-        parent.addView(overview, fullWidth());
-    }
-
-    private void addOverviewLine(LinearLayout parent, String value, float size, int color, boolean bold) {
-        TextView line = text(value, size, color, bold);
-        line.setSingleLine(true);
-        line.setEllipsize(TextUtils.TruncateAt.END);
-        parent.addView(line, fullWidth());
-    }
-
-    private static String probability(double value) {
-        return Double.isFinite(value) ? String.format(Locale.CHINA, "%.3f", value) : "—";
     }
 
     private boolean hasNotificationAccess() {
