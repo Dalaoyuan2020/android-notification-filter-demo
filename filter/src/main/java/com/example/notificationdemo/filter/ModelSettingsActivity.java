@@ -435,7 +435,12 @@ public final class ModelSettingsActivity extends Activity {
             draft.originKeyCleared = false;
         }
         if (ModelConfig.isTeam1052(draft.profile())) {
-            teamKey = draft.key;
+            // A host edit clears this editor, not the platform credential already
+            // used by other routes. Only an explicit key edit at a stable origin
+            // (or selecting the team preset) may replace/clear the shared key.
+            if (!draft.originKeyCleared) {
+                teamKey = draft.key;
+            }
             syncSharedTeamKey();
         }
     }
@@ -470,7 +475,7 @@ public final class ModelSettingsActivity extends Activity {
         }
         displayedKeyOrigin = nextOrigin;
         Draft draft = drafts[selectedProfile];
-        draft.originKeyCleared |= keyField.length() > 0;
+        draft.originKeyCleared = true;
         draft.key = "";
         // Clear only this editor's credential. The independent 1052 key remains
         // available to other 1052 routes and to an explicit return to that preset.
@@ -657,12 +662,12 @@ public final class ModelSettingsActivity extends Activity {
         String detail = selectedMode == ModelConfig.Mode.KEYWORDS
                 ? "关键词在本机判断；本策略不会调用远程模型。"
                 : selectedMode == ModelConfig.Mode.OFFICIAL
-                ? "目标通知送到路线 1。保存后先观察概率，再按需开启自动清除。"
+                ? "允许远程处理并保存后，目标通知才会送到路线 1。先观察概率，再按需开启自动清除。"
                 : selectedMode == ModelConfig.Mode.BOCHA
-                ? "目标通知送到路线 2。请先用合成消息确认配置。"
+                ? "允许远程处理并保存后，目标通知才会送到路线 2。请先用合成消息确认配置。"
                 : selectedMode == ModelConfig.Mode.RELAY
-                ? "目标通知送到路线 3。请先用合成消息确认配置。"
-                : "同一通知分别交给已勾选路线，最多三路；显示原始与融合概率，对照始终不清除。";
+                ? "允许远程处理并保存后，目标通知才会送到路线 3。请先用合成消息确认配置。"
+                : "允许远程处理并保存后，同一通知分别交给已勾选路线，最多三路；显示原始与融合概率，对照始终不清除。";
         strategyDetail.setText(detail);
         profileTitle.setText("正在编辑：" + routeName(selectedProfile));
         officialButton.setBackground(background(selectedProfile == 0 ? TEAL : SOFT_TEAL, 11, 0));

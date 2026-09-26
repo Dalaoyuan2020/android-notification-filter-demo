@@ -10,7 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -39,10 +38,6 @@ public final class MainActivity extends Activity {
     private static final int MUTED = ui_theme.MUTED;
     private static final int TEAL = ui_theme.ACCENT;
     private static final int BACKGROUND = ui_theme.PAPER;
-    private static final int BORDER = ui_theme.BORDER;
-    private static final int SOFT_TEAL = ui_theme.SOFT_GREEN;
-    private static final int AMBER = ui_theme.WARNING;
-    private static final int SOFT_AMBER = ui_theme.SOFT_YELLOW;
     private static final int PAGE_HOME = 0;
     private static final int PAGE_MESSAGES = 1;
     private static final int PAGE_INTELLIGENCE = 2;
@@ -56,13 +51,11 @@ public final class MainActivity extends Activity {
     private String messageFilter = notification_ui_data.FILTER_ALL;
     private home_page_view homePage;
     private messages_page_view messagesPage;
+    private judge_page_view judgePage;
 
     private TextView permissionValue;
     private TextView connectionValue;
-    private TextView modeValue;
-    private TextView modeDescription;
     private TextView saveFeedback;
-    private TextView strategySummary;
     private Switch autoSwitch;
     private EditText targets;
     private EditText keepWords;
@@ -156,9 +149,24 @@ public final class MainActivity extends Activity {
     }
 
     private void buildIntelligencePage() {
-        LinearLayout content = buildPage(PAGE_INTELLIGENCE, "智能判断", "管理判断策略、自动清除和短时注意力。");
-        makeModelCard(content);
-        makeModeCard(content);
+        LinearLayout content = buildPage(PAGE_INTELLIGENCE, "", "");
+        judgePage = new judge_page_view(this);
+        judgePage.setModelAction((note, action) -> startActivity(new Intent(this, ModelSettingsActivity.class)));
+        judgePage.setAttentionAction((note, action) -> startActivity(new Intent(this, AttentionActivity.class)));
+        autoSwitch = judgePage.getAutoSwitch();
+        autoSwitch.setOnCheckedChangeListener((button, enabled) -> {
+            if (updatingSwitch) return;
+            ModelConfig config = ModelStore.load(this);
+            if (enabled && !allowsAutomatic(config)) {
+                DemoStore.setAuto(this, false);
+                refreshState();
+                toast("当前策略仅观察，请先检查模型配置与远程处理开关");
+                return;
+            }
+            DemoStore.setAuto(this, enabled);
+            refreshState();
+        });
+        content.addView(judgePage, fullWidth());
     }
 
     private void buildProfilePage() {
@@ -345,61 +353,6 @@ public final class MainActivity extends Activity {
         card.addView(refresh, fullWidth());
     }
 
-    private void makeModeCard(LinearLayout parent) {
-        LinearLayout card = card(parent);
-        LinearLayout heading = row();
-        TextView title = text("02  处理方式", ui_theme.SECTION_SP, INK, true);
-        heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        modeValue = chip("观察模式", TEAL, SOFT_TEAL);
-        heading.addView(modeValue);
-        card.addView(heading);
-        addSpace(card, 12);
-        autoSwitch = new Switch(this);
-        autoSwitch.setText("自动清除");
-        autoSwitch.setTextSize(16);
-        autoSwitch.setTextColor(INK);
-        autoSwitch.setPadding(0, dp(8), 0, dp(8));
-        autoSwitch.setMinHeight(dp(52));
-        autoSwitch.setShowText(false);
-        ui_theme.toggle(autoSwitch);
-        autoSwitch.setOnCheckedChangeListener((button, enabled) -> {
-            if (updatingSwitch) return;
-            ModelConfig config = ModelStore.load(this);
-            if (enabled && !allowsAutomatic(config)) {
-                DemoStore.setAuto(this, false);
-                refreshState();
-                toast("当前策略仅观察，请先检查模型配置与远程处理开关");
-                return;
-            }
-            DemoStore.setAuto(this, enabled);
-            refreshState();
-        });
-        card.addView(autoSwitch, fullWidth());
-        modeDescription = text("", 13, MUTED, false);
-        card.addView(modeDescription);
-        addSpace(card, 12);
-        TextView caution = text("开启即按已保存的规则清除目标 App 的通知。清除的是通知卡片，不能保证恢复；也不能保证拦住声音、振动或横幅。", 12, AMBER, false);
-        caution.setPadding(dp(12), dp(10), dp(12), dp(10));
-        caution.setBackground(background(SOFT_AMBER, 10, 0));
-        card.addView(caution);
-    }
-
-    private void makeModelCard(LinearLayout parent) {
-        LinearLayout card = card(parent);
-        sectionTitle(card, "03", "判断策略");
-        addSpace(card, 10);
-        strategySummary = text("", 13, MUTED, false);
-        card.addView(strategySummary);
-        addSpace(card, 14);
-        Button settings = button("配置模型与三路对照", false);
-        settings.setOnClickListener(view -> startActivity(new Intent(this, ModelSettingsActivity.class)));
-        card.addView(settings, fullWidth());
-        addSpace(card, 8);
-        Button attention = button("短时注意力 · 行为与上传设置", false);
-        attention.setOnClickListener(view -> startActivity(new Intent(this, AttentionActivity.class)));
-        card.addView(attention, fullWidth());
-    }
-
     private void makeRulesCard(LinearLayout parent) {
         LinearLayout card = card(parent);
         sectionTitle(card, "04", "关键词规则");
@@ -449,38 +402,13 @@ public final class MainActivity extends Activity {
         boolean connected = FilterService.isConnected();
         boolean automatic = DemoStore.getAuto(this);
         ModelConfig modelConfig = ModelStore.load(this);
-        boolean comparison = modelConfig.mode == ModelConfig.Mode.COMPARE;
         setStatus(permissionValue, granted ? "已授权" : "待开启", granted);
         setStatus(connectionValue, connected ? "已连接" : granted ? "等待连接" : "未连接", connected);
-        modeValue.setText(comparison ? "对照观察" : automatic ? "自动模式" : "观察模式");
-        modeValue.setTextColor(automatic ? AMBER : TEAL);
-        modeValue.setBackground(background(automatic ? SOFT_AMBER : SOFT_TEAL, 30, 0));
-        modeDescription.setText(comparison
-                ? "多路对照只记录选定路线的判断，绝不发起清除。切换策略并保存后，需重新手动开启自动清除。"
-                : !allowsAutomatic(modelConfig)
-                ? "当前模型策略尚未开启远程处理，或配置存储不可用；自动清除暂不可用。"
-                : automatic
-                ? "已开启：命中清除规则后请求系统移除通知，并记录结果。"
-                : "默认仅观察：展示保留或清除建议，不移除通知。先确认规则，再开启自动清除。" );
-        updatingSwitch = true;
-        autoSwitch.setChecked(automatic);
-        autoSwitch.setEnabled(allowsAutomatic(modelConfig));
-        updatingSwitch = false;
-        String route = modelConfig.mode == ModelConfig.Mode.KEYWORDS ? "关键词 · 本机规则"
-                : modelConfig.mode == ModelConfig.Mode.OFFICIAL ? "路线 1 · " + profileLabel(modelConfig.official)
-                : modelConfig.mode == ModelConfig.Mode.BOCHA ? "路线 2 · " + profileLabel(modelConfig.bocha)
-                : modelConfig.mode == ModelConfig.Mode.RELAY ? "路线 3 · " + profileLabel(modelConfig.relay)
-                : "多路对照 · 只观察，不清除";
-        String remote = modelConfig.mode == ModelConfig.Mode.KEYWORDS
-                ? "当前在本机处理通知，不调用远程模型。"
-                : modelConfig.remoteEnabled
-                ? "远程处理已开启：目标通知的包名、标题、正文和类别可发送到您配置的服务。"
-                : "远程处理已关闭：保留通知，不发送；不回退执行关键词清除。";
         AttentionStore.Config attention = AttentionStore.loadConfig(this);
-        strategySummary.setText(route + "\n" + remote
-                + "\n近期行为摘要：" + (attention.recentBehaviorEnabled ? "开启" : "关闭")
-                + " · 独立事件上传：" + (attention.uploadEnabled ? "开启" : "关闭")
-                + (modelConfig.storageError.isEmpty() ? "" : "\n密钥存储不可用，请进入配置页检查。"));
+        boolean allowed = allowsAutomatic(modelConfig);
+        updatingSwitch = true;
+        judgePage.update(modelConfig, attention, automatic && allowed, allowed);
+        updatingSwitch = false;
         JSONArray entries = DemoStore.getLogs(this);
         long now = System.currentTimeMillis();
         homePage.update(granted, connected, notification_ui_data.snapshot(entries, now), now);
@@ -490,10 +418,6 @@ public final class MainActivity extends Activity {
     private static boolean allowsAutomatic(ModelConfig config) {
         return config.mode == ModelConfig.Mode.KEYWORDS || (config.mode != ModelConfig.Mode.COMPARE
                 && config.storageError.isEmpty() && config.remoteEnabled);
-    }
-
-    private static String profileLabel(ModelConfig.Profile profile) {
-        return profile.label.isEmpty() ? "未命名配置" : profile.label;
     }
 
     private boolean hasNotificationAccess() {
@@ -629,13 +553,6 @@ public final class MainActivity extends Activity {
         parent.addView(text(number + "  " + title, ui_theme.SECTION_SP, INK, true));
     }
 
-    private TextView chip(String label, int foreground, int fill) {
-        TextView view = text(label, 11, foreground, true);
-        view.setPadding(dp(9), dp(5), dp(9), dp(5));
-        view.setBackground(background(fill, 30, 0));
-        return view;
-    }
-
     private Button button(String label, boolean primary) {
         Button view = new Button(this);
         view.setText(label);
@@ -658,10 +575,6 @@ public final class MainActivity extends Activity {
         view.setOrientation(LinearLayout.HORIZONTAL);
         view.setGravity(Gravity.CENTER_VERTICAL);
         return view;
-    }
-
-    private GradientDrawable background(int fill, int radius, int stroke) {
-        return ui_theme.shape(this, fill, radius, stroke);
     }
 
     private void addSpace(LinearLayout parent, int height) {
