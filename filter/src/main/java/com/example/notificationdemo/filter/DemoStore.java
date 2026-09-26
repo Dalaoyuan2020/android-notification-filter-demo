@@ -60,13 +60,32 @@ public final class DemoStore {
         }
     }
 
-    public static synchronized void clearLogs(Context context) {
-        prefs(context).edit().remove("logs").apply();
+    public static void clearLogs(Context context) {
+        synchronized (DemoStore.class) {
+            prefs(context).edit().remove("logs").putLong("decision_revision", getDecisionRevision(context) + 1).apply();
+        }
+        AttentionStore.clearMemory(context);
+        FilterService.clearAttentionTracking();
         notifyChanged(context);
     }
 
     static synchronized void addLog(Context context, String pkg, String title, String text,
                                     String action, String reason, String key) {
+        addEvent(context, pkg, title, text, action, reason, key, null, null, null);
+    }
+
+    static synchronized void addModelLog(Context context, DecisionEngine.Input input, String action,
+                                        String reason, String key, JSONArray models, String comparison) {
+        addEvent(context, input.packageName, input.title, input.text, action, reason, key, models, comparison, null);
+    }
+
+    static synchronized void addAttentionLog(Context context, DecisionEngine.Input input, String reason,
+                                            String key, JSONObject attention) {
+        addEvent(context, input.packageName, input.title, input.text, "注意力", reason, key, null, null, attention);
+    }
+
+    private static void addEvent(Context context, String pkg, String title, String text,
+            String action, String reason, String key, JSONArray models, String comparison, JSONObject attention) {
         JSONObject event = new JSONObject();
         try {
             event.put("time", System.currentTimeMillis());
@@ -76,6 +95,9 @@ public final class DemoStore {
             event.put("action", truncate(action, 40));
             event.put("reason", truncate(reason, 400));
             event.put("key", truncate(key, 600));
+            if (models != null) event.put("models", models);
+            if (comparison != null) event.put("comparison", comparison);
+            if (attention != null) event.put("attention", attention);
         } catch (JSONException impossible) {
             return;
         }

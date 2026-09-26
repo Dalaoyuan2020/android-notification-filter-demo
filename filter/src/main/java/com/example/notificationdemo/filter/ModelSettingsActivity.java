@@ -16,6 +16,9 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -23,6 +26,7 @@ import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Switch;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -44,10 +48,12 @@ public final class ModelSettingsActivity extends Activity {
     private static final int AMBER = 0xFF96590F;
     private static final int SOFT_AMBER = 0xFFFFF6E2;
     private static final int MODE_ID_BASE = 4100;
+    private static final ModelConfig.Mode[] MODE_CHOICES = {ModelConfig.Mode.KEYWORDS,
+            ModelConfig.Mode.OFFICIAL, ModelConfig.Mode.BOCHA, ModelConfig.Mode.RELAY, ModelConfig.Mode.COMPARE};
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final Draft[] drafts = {new Draft(), new Draft()};
+    private final Draft[] drafts = {new Draft(), new Draft(), new Draft()};
     private Future<?> testTask;
     private ModelConfig.Mode selectedMode = ModelConfig.Mode.KEYWORDS;
     private ModelConfig saved;
@@ -60,9 +66,11 @@ public final class ModelSettingsActivity extends Activity {
     private RadioGroup modes;
     private Switch remoteSwitch;
     private Button officialButton;
+    private Button bochaButton;
     private Button relayButton;
     private Button saveButton;
     private Button testButton;
+    private Button presetButton;
     private TextView strategyDetail;
     private TextView saveStatus;
     private TextView profileTitle;
@@ -71,22 +79,30 @@ public final class ModelSettingsActivity extends Activity {
     private EditText urlField;
     private EditText modelField;
     private EditText keyField;
+    private EditText thresholdField;
+    private Spinner protocolField;
+    private CheckBox compareOfficial;
+    private CheckBox compareBocha;
+    private CheckBox compareRelay;
+    private LinearLayout comparePanel;
 
     private static final class Draft {
         String label = "";
         String baseUrl = "";
         String model = "";
         String key = "";
+        ModelConfig.Protocol protocol = ModelConfig.Protocol.JEV_SYSTEMONE;
 
         void read(ModelConfig.Profile profile) {
             label = profile.label;
             baseUrl = profile.baseUrl;
             model = profile.model;
             key = profile.apiKey;
+            protocol = profile.protocol;
         }
 
         ModelConfig.Profile profile() {
-            return new ModelConfig.Profile(label.trim(), baseUrl.trim(), model.trim(), key.trim());
+            return new ModelConfig.Profile(label.trim(), baseUrl.trim(), model.trim(), key.trim(), protocol);
         }
 
         void clearKey() { key = ""; }
@@ -94,12 +110,14 @@ public final class ModelSettingsActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
         saved = ModelStore.load(this);
         selectedMode = saved.mode;
         storageUnavailable = !saved.storageError.isEmpty();
         drafts[0].read(saved.official);
-        drafts[1].read(saved.relay);
-        selectedProfile = selectedMode == ModelConfig.Mode.RELAY ? 1 : 0;
+        drafts[1].read(saved.bocha);
+        drafts[2].read(saved.relay);
+        selectedProfile = selectedMode == ModelConfig.Mode.BOCHA ? 1 : selectedMode == ModelConfig.Mode.RELAY ? 2 : 0;
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(BACKGROUND);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
@@ -135,9 +153,9 @@ public final class ModelSettingsActivity extends Activity {
         back.setOnClickListener(view -> finish());
         page.addView(back, fullWidth());
         space(page, 22);
-        page.addView(text("模型与双路对照", 28, INK, true));
+        page.addView(text("模型与三路对照", 28, INK, true));
         space(page, 8);
-        page.addView(text("先保存配置，再用合成消息测试连接。所有服务地址与模型 ID 均由您填写。", 14, MUTED, false));
+        page.addView(text("三路分别配置协议、地址和模型 ID。预设不含密钥；保存后先用合成消息测试。", 14, MUTED, false));
         space(page, 22);
 
         makeStrategyCard(page);
@@ -150,8 +168,12 @@ public final class ModelSettingsActivity extends Activity {
         scroll.requestApplyInsets();
 
         loading = true;
-        modes.check(MODE_ID_BASE + selectedMode.ordinal());
+        modes.check(MODE_ID_BASE + modeIndex(selectedMode));
         remoteSwitch.setChecked(saved.remoteEnabled);
+        thresholdField.setText(Double.toString(saved.threshold));
+        compareOfficial.setChecked(saved.compareOfficial);
+        compareBocha.setChecked(saved.compareBocha);
+        compareRelay.setChecked(saved.compareRelay);
         populateProfile();
         loading = false;
         dirty = false;
@@ -170,8 +192,8 @@ public final class ModelSettingsActivity extends Activity {
         space(card, 10);
         modes = new RadioGroup(this);
         modes.setOrientation(RadioGroup.VERTICAL);
-        String[] names = {"关键词 · 本机规则（默认）", "官方模型 · 使用官方配置",
-                "中转模型 · 使用中转配置", "双路对照 · 只观察，不清除"};
+        String[] names = {"关键词 · 本机规则（默认）", "TypeSafe 官方 · 单路判断",
+                "Bocha 官方 · 单路判断", "自训中转 · 单路判断", "多路对照 · 只观察，不清除"};
         for (int i = 0; i < names.length; i++) {
             RadioButton choice = new RadioButton(this);
             choice.setId(MODE_ID_BASE + i);
@@ -185,18 +207,28 @@ public final class ModelSettingsActivity extends Activity {
         }
         modes.setOnCheckedChangeListener((group, id) -> {
             int index = id - MODE_ID_BASE;
-            if (index < 0 || index >= ModelConfig.Mode.values().length) {
+            if (index < 0 || index >= MODE_CHOICES.length) {
                 return;
             }
-            selectedMode = ModelConfig.Mode.values()[index];
+            selectedMode = MODE_CHOICES[index];
             markDirty();
         });
         card.addView(modes);
         space(card, 8);
         strategyDetail = text("", 13, MUTED, false);
         card.addView(strategyDetail);
+        comparePanel = column();
+        space(comparePanel, 10);
+        comparePanel.addView(text("选择参与对照的路线", 13, INK, true));
+        compareOfficial = routeCheck(comparePanel, "TypeSafe 官方");
+        compareBocha = routeCheck(comparePanel, "Bocha 官方");
+        compareRelay = routeCheck(comparePanel, "自训中转");
+        card.addView(comparePanel, fullWidth());
+        thresholdField = input(card, "保留阈值 · 0 至 1", "0.5", false, false);
+        thresholdField.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        card.addView(text("最终概率达到阈值时保留。默认 0.5；多路对照无论概率多少都不清除。", 12, MUTED, false));
         space(card, 14);
-        TextView disclosure = text("开启并保存远程处理后，符合目标范围与保护规则的通知，其包名、标题、正文和类别将发送给您填写的服务；双路对照会发送给两路服务。请先使用合成样本确认服务与规则。", 13, AMBER, false);
+        TextView disclosure = text("开启并保存后，符合目标与保护规则的通知数据将发送给选定服务；JEV 路线还可附带注意力页启用的近期行为摘要。多路对照只发送给已勾选路线。请先用合成样本测试。", 13, AMBER, false);
         disclosure.setPadding(dp(12), dp(12), dp(12), dp(12));
         disclosure.setBackground(background(SOFT_AMBER, 10, 0));
         card.addView(disclosure);
@@ -218,24 +250,49 @@ public final class ModelSettingsActivity extends Activity {
         LinearLayout card = card(parent);
         card.addView(text("02  服务配置", 17, INK, true));
         space(card, 8);
-        card.addView(text("“官方”和“中转”仅区分两条测试路线。未预设供应商，也尚未验证您的服务是否兼容。", 13, MUTED, false));
+        card.addView(text("预设仅提供地址、协议和模型标识，不提供密钥，也不代表已完成真实连通验证。各路密钥分别保存。", 13, MUTED, false));
         space(card, 14);
         LinearLayout selectors = new LinearLayout(this);
         selectors.setOrientation(LinearLayout.HORIZONTAL);
-        officialButton = button("编辑官方配置", false);
-        relayButton = button("编辑中转配置", false);
+        officialButton = button("TypeSafe", false);
+        bochaButton = button("Bocha", false);
+        relayButton = button("自训中转", false);
         LinearLayout.LayoutParams first = new LinearLayout.LayoutParams(0, -2, 1);
         first.setMarginEnd(dp(8));
         selectors.addView(officialButton, first);
+        LinearLayout.LayoutParams middle = new LinearLayout.LayoutParams(0, -2, 1);
+        middle.setMarginEnd(dp(8));
+        selectors.addView(bochaButton, middle);
         selectors.addView(relayButton, new LinearLayout.LayoutParams(0, -2, 1));
         officialButton.setOnClickListener(view -> selectProfile(0));
-        relayButton.setOnClickListener(view -> selectProfile(1));
+        bochaButton.setOnClickListener(view -> selectProfile(1));
+        relayButton.setOnClickListener(view -> selectProfile(2));
         card.addView(selectors, fullWidth());
+        space(card, 8);
+        presetButton = button("载入当前路线预设 · 保留密钥", false);
+        presetButton.setOnClickListener(view -> loadPreset());
+        card.addView(presetButton, fullWidth());
         space(card, 16);
         profileTitle = text("", 14, TEAL, true);
         card.addView(profileTitle);
+        space(card, 12);
+        card.addView(text("接口协议", 13, INK, true));
+        protocolField = new Spinner(this);
+        protocolField.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"JEV SystemOne · state / questions / choices", "Chat Completions · 兼容聊天补全"}));
+        protocolField.setSaveEnabled(false);
+        protocolField.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (!loading && drafts[selectedProfile].protocol != protocolValue()) {
+                    drafts[selectedProfile].protocol = protocolValue();
+                    markDirty();
+                }
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        card.addView(protocolField, fullWidth());
         labelField = input(card, "配置标签 / 版本标识", "例如：本轮基线 v1", false, false);
-        urlField = input(card, "Base URL · HTTPS", "服务文档提供的兼容 API 基础地址", false, true);
+        urlField = input(card, "接口地址 · HTTPS", "JEV 可填根地址、/v1 或 /v1/systemone", false, true);
         modelField = input(card, "模型 ID", "服务文档中的精确模型标识", false, false);
         keyField = input(card, "API Key · 本机加密保存", "无需鉴权的自训端点可留空", true, false);
         card.addView(text("地址不含账号密码、查询参数或片段。手机测试时不要填写电脑的 localhost；密钥请填写在独立的 API Key 字段。", 12, MUTED, false));
@@ -281,12 +338,31 @@ public final class ModelSettingsActivity extends Activity {
         updateViewState();
     }
 
+    private void loadPreset() {
+        if (testRunning) return;
+        if (selectedProfile == 2) {
+            saveStatus.setText("自训中转没有固定的部署地址；请填写您实际部署的 HTTPS 地址与模型 ID，密钥不会预填。");
+            return;
+        }
+        captureProfile();
+        ModelConfig.Profile preset = selectedProfile == 0 ? ModelConfig.presetTypeSafe() : ModelConfig.presetBocha();
+        Draft draft = drafts[selectedProfile];
+        draft.label = preset.label;
+        draft.baseUrl = preset.baseUrl;
+        draft.model = preset.model;
+        draft.protocol = preset.protocol;
+        populateProfile();
+        markDirty();
+        saveStatus.setText("已填入当前路线地址、协议与模型预设，原密钥未改动；保存后再做连接测试。");
+    }
+
     private void captureProfile() {
         Draft draft = drafts[selectedProfile];
         draft.label = labelField.getText().toString();
         draft.baseUrl = urlField.getText().toString();
         draft.model = modelField.getText().toString();
         draft.key = keyField.getText().toString();
+        draft.protocol = protocolValue();
     }
 
     private void populateProfile() {
@@ -297,6 +373,7 @@ public final class ModelSettingsActivity extends Activity {
         urlField.setText(draft.baseUrl);
         modelField.setText(draft.model);
         keyField.setText(draft.key);
+        protocolField.setSelection(draft.protocol == ModelConfig.Protocol.JEV_SYSTEMONE ? 0 : 1);
         keyField.setSelection(keyField.length());
         loading = previousLoading;
     }
@@ -315,16 +392,32 @@ public final class ModelSettingsActivity extends Activity {
             return;
         }
         captureProfile();
+        double threshold;
+        try {
+            threshold = Double.parseDouble(thresholdField.getText().toString().trim());
+            if (!Double.isFinite(threshold) || threshold < 0 || threshold > 1) {
+                throw new NumberFormatException();
+            }
+        } catch (NumberFormatException invalid) {
+            thresholdField.setError("请填写 0 至 1 的概率阈值");
+            return;
+        }
         try {
             saved = ModelStore.save(this, selectedMode, remoteSwitch.isChecked(),
-                    drafts[0].profile(), drafts[1].profile());
+                    drafts[0].profile(), drafts[2].profile(), drafts[1].profile(), threshold,
+                    compareOfficial.isChecked(), compareRelay.isChecked(), compareBocha.isChecked());
             drafts[0].read(saved.official);
-            drafts[1].read(saved.relay);
+            drafts[1].read(saved.bocha);
+            drafts[2].read(saved.relay);
             storageUnavailable = !saved.storageError.isEmpty();
             loading = true;
             selectedMode = saved.mode;
-            modes.check(MODE_ID_BASE + selectedMode.ordinal());
+            modes.check(MODE_ID_BASE + modeIndex(selectedMode));
             remoteSwitch.setChecked(saved.remoteEnabled);
+            thresholdField.setText(Double.toString(saved.threshold));
+            compareOfficial.setChecked(saved.compareOfficial);
+            compareBocha.setChecked(saved.compareBocha);
+            compareRelay.setChecked(saved.compareRelay);
             populateProfile();
             loading = false;
             dirty = false;
@@ -357,12 +450,14 @@ public final class ModelSettingsActivity extends Activity {
             testStatus.setText("密钥存储不可用。请重新填写所需配置的完整密钥并保存，连接测试暂不执行。");
             return;
         }
-        final ModelConfig.Profile profile = selectedProfile == 0 ? saved.official : saved.relay;
+        final ModelConfig.Profile profile = selectedProfile == 0 ? saved.official
+                : selectedProfile == 1 ? saved.bocha : saved.relay;
+        final double testThreshold = saved.threshold;
         if (profile.baseUrl.trim().isEmpty() || profile.model.trim().isEmpty()) {
             testStatus.setText("请先填写当前配置的 HTTPS Base URL 和模型 ID，然后保存。");
             return;
         }
-        final String route = selectedProfile == 0 ? "官方配置" : "中转配置";
+        final String route = routeName(selectedProfile);
         testRunning = true;
         testStatus.setText("正在测试" + route + " · 仅发送固定合成消息，请稍候…");
         updateViewState();
@@ -371,7 +466,7 @@ public final class ModelSettingsActivity extends Activity {
         testTask = worker.submit(() -> {
             ModelClient.Result result = null;
             try {
-                result = ModelClient.testConnection(profile);
+                result = ModelClient.testConnection(profile, testThreshold);
             } catch (RuntimeException ignored) {
                 // Neither request details nor exception messages enter logs or UI.
             }
@@ -393,11 +488,15 @@ public final class ModelSettingsActivity extends Activity {
         } else if (result.success) {
             String verdict = result.action == DecisionEngine.Action.REMOVE ? "建议清除"
                     : result.action == DecisionEngine.Action.SKIP ? "跳过" : "保留";
-            String output = String.format(Locale.CHINA, "%s测试成功 · %d ms\n返回判断：%s\n原因：%s\n仅代表这次合成请求成功，尚未验证真实通知效果。",
-                    route, result.latencyMs, verdict, redact(result.reason, profile.apiKey));
+            String probability = result.hasProbability
+                    ? String.format(Locale.CHINA, "p_jev = %.3f", result.probability)
+                    : "无原始概率（由 choice 换算）";
+            String output = String.format(Locale.CHINA, "%s测试成功 · %d ms\n%s\n返回判断：%s\n原因：%s\n仅代表这次合成请求成功，尚未验证真实通知效果。",
+                    route, result.latencyMs, probability, verdict, redact(result.reason, profile.apiKey));
             testStatus.setText(output);
         } else {
             testStatus.setText("测试失败 · " + redact(result.error, profile.apiKey)
+                    + "\n" + redact(result.reason, profile.apiKey)
                     + "\n未验证该接口兼容。请核对基础地址、鉴权方式、模型 ID 和服务文档。");
         }
         updateViewState();
@@ -410,24 +509,36 @@ public final class ModelSettingsActivity extends Activity {
         String detail = selectedMode == ModelConfig.Mode.KEYWORDS
                 ? "关键词在本机判断；本策略不会调用远程模型。"
                 : selectedMode == ModelConfig.Mode.OFFICIAL
-                ? "目标通知送到官方配置对应的服务。保存后先观察结果，再按需开启自动清除。"
+                ? "目标通知送到 TypeSafe 配置。保存后先观察概率，再按需开启自动清除。"
+                : selectedMode == ModelConfig.Mode.BOCHA
+                ? "目标通知送到 Bocha 配置。协议必须与该路服务文档一致。"
                 : selectedMode == ModelConfig.Mode.RELAY
                 ? "目标通知送到中转配置对应的服务；自训模型需由该服务提供兼容接口。"
-                : "同一通知分别交给两路配置，分别记录结果。即使两路均建议清除，也不会执行删除。";
+                : "同一通知分别交给已勾选路线，最多三路；显示原始与融合概率，对照始终不清除。";
         strategyDetail.setText(detail);
-        profileTitle.setText(selectedProfile == 0 ? "正在编辑：官方配置" : "正在编辑：中转配置");
+        profileTitle.setText("正在编辑：" + routeName(selectedProfile));
         officialButton.setBackground(background(selectedProfile == 0 ? TEAL : SOFT_TEAL, 11, 0));
         officialButton.setTextColor(selectedProfile == 0 ? Color.WHITE : TEAL);
-        relayButton.setBackground(background(selectedProfile == 1 ? TEAL : SOFT_TEAL, 11, 0));
-        relayButton.setTextColor(selectedProfile == 1 ? Color.WHITE : TEAL);
+        bochaButton.setBackground(background(selectedProfile == 1 ? TEAL : SOFT_TEAL, 11, 0));
+        bochaButton.setTextColor(selectedProfile == 1 ? Color.WHITE : TEAL);
+        relayButton.setBackground(background(selectedProfile == 2 ? TEAL : SOFT_TEAL, 11, 0));
+        relayButton.setTextColor(selectedProfile == 2 ? Color.WHITE : TEAL);
         officialButton.setEnabled(!testRunning);
+        bochaButton.setEnabled(!testRunning);
         relayButton.setEnabled(!testRunning);
+        presetButton.setEnabled(!testRunning);
         saveButton.setEnabled(!testRunning);
         testButton.setEnabled(!testRunning && !storageUnavailable);
         labelField.setEnabled(!testRunning);
         urlField.setEnabled(!testRunning);
         modelField.setEnabled(!testRunning);
         keyField.setEnabled(!testRunning);
+        protocolField.setEnabled(!testRunning);
+        thresholdField.setEnabled(!testRunning);
+        compareOfficial.setEnabled(!testRunning);
+        compareBocha.setEnabled(!testRunning);
+        compareRelay.setEnabled(!testRunning);
+        comparePanel.setVisibility(selectedMode == ModelConfig.Mode.COMPARE ? View.VISIBLE : View.GONE);
         remoteSwitch.setEnabled(!testRunning);
         for (int i = 0; i < modes.getChildCount(); i++) {
             modes.getChildAt(i).setEnabled(!testRunning);
@@ -457,6 +568,34 @@ public final class ModelSettingsActivity extends Activity {
             safe = safe.replace(key, "[密钥已隐藏]");
         }
         return safe.length() > 700 ? safe.substring(0, 700) + "…" : safe;
+    }
+
+    private static int modeIndex(ModelConfig.Mode mode) {
+        for (int i = 0; i < MODE_CHOICES.length; i++) {
+            if (MODE_CHOICES[i] == mode) return i;
+        }
+        return 0;
+    }
+
+    private static String routeName(int profile) {
+        return profile == 0 ? "TypeSafe 官方" : profile == 1 ? "Bocha 官方" : "自训中转";
+    }
+
+    private ModelConfig.Protocol protocolValue() {
+        return protocolField.getSelectedItemPosition() == 0
+                ? ModelConfig.Protocol.JEV_SYSTEMONE : ModelConfig.Protocol.CHAT_COMPLETIONS;
+    }
+
+    private CheckBox routeCheck(LinearLayout parent, String title) {
+        CheckBox box = new CheckBox(this);
+        box.setText(title);
+        box.setTextSize(14);
+        box.setTextColor(INK);
+        box.setMinHeight(dp(44));
+        box.setSaveEnabled(false);
+        box.setOnCheckedChangeListener((button, checked) -> markDirty());
+        parent.addView(box, fullWidth());
+        return box;
     }
 
     private EditText input(LinearLayout parent, String label, String hint, boolean password, boolean uri) {

@@ -55,12 +55,14 @@ public final class MainActivity extends Activity {
         channel.enableVibration(false);
         notifications.createNotificationChannel(channel);
         buildUi();
+        handleOpenedSample(getIntent());
         if (savedInstanceState == null) handleDebugIntent(getIntent());
     }
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        handleOpenedSample(intent);
         handleDebugIntent(intent);
     }
 
@@ -135,7 +137,13 @@ public final class MainActivity extends Activity {
         button(update, "301 · 第一步：发送广告", () -> runScenario("update_ad"), false);
         button(update, "301 · 第二步：更新为紧急消息", () -> runScenario("update_urgent"), false);
 
-        LinearLayout log = card(page, "05  发送记录");
+        LinearLayout attention = card(page, "05  短时注意力演示");
+        attention.addView(label("先关闭筛选器的自动清除。发送五条【淘宝】样本后，下拉通知栏并展开分组，逐条手动划掉；不要用下方清空按钮代替。然后发送探针，比较【淘宝】与【银行】的注意力概率。", 14, 0xFF5C6A80));
+        button(attention, "第一步 · 发送 5 条【淘宝】样本", () -> runScenario("attention_demo"), true);
+        button(attention, "第二步 · 发送【淘宝】+【银行】探针", () -> runScenario("probe"), false);
+        addMargin(attention, label("通知可点击打开本 App，由系统产生点击移除回调。只发送合成数据；不会伪造点击或划除行为。\nsuite_s1 已跳过：当前仓库未提供 attention_suite_v1.jsonl。", 12, 0xFF5C6A80), 8);
+
+        LinearLayout log = card(page, "06  发送记录");
         button(log, "清空本发送器的全部通知", () -> runScenario("clear"), false);
         eventLog = label("尚未发送。样本不包含真实私人消息。", 12, 0xFF5C6A80);
         eventLog.setTextIsSelectable(true);
@@ -152,6 +160,13 @@ public final class MainActivity extends Activity {
         String scenario = intent.getStringExtra("scenario");
         intent.removeExtra("scenario");
         runScenario(scenario);
+    }
+
+    private void handleOpenedSample(Intent intent) {
+        if (intent == null || !intent.hasExtra("opened_sample")) return;
+        int id = intent.getIntExtra("opened_sample", -1);
+        intent.removeExtra("opened_sample");
+        appendLog("已打开样本 " + id + "。点击是否被监听器观察到，请到筛选器注意力页核对；不在此伪造行为。");
     }
 
     private boolean hasPermission() {
@@ -198,6 +213,10 @@ public final class MainActivity extends Activity {
 
     private void runScenario(String scenario) {
         if (scenario == null) return;
+        if ("suite_s1".equals(scenario)) {
+            appendLog("suite_s1：跳过；当前仓库未提供 attention_suite_v1.jsonl，没有生成替代数据集。");
+            return;
+        }
         if ("clear".equals(scenario)) {
             notifications.cancelAll();
             appendLog("已请求清除本 App 的全部测试通知。");
@@ -226,6 +245,19 @@ public final class MainActivity extends Activity {
             case "update_urgent":
                 post(301, "更新测试｜紧急消息", "紧急：家人发来重要消息，请及时查看。", false, null, false);
                 appendLog("update_urgent：301 更新为紧急，预期保留。"); break;
+            case "attention_demo":
+                for (int i = 0; i < 5; i++) {
+                    post(410 + i, "【淘宝】合成优惠样本 " + (i + 1),
+                            "这是一条测试促销推荐，请在通知栏逐条手动划掉，用于观察短时注意力变化。",
+                            false, "attention_sample_" + i, false);
+                }
+                appendLog("attention_demo：已发送 410–414 五条【淘宝】。请关闭自动清除并逐条手动划掉，再点探针按钮。");
+                break;
+            case "probe":
+                post(420, "【淘宝】合成促销探针", "测试优惠推荐：这是手动划掉五条样本后的对比探针。", false, null, false);
+                post(421, "【银行】合成转账提醒", "合成银行通知：一笔测试转账已到账，金额为 9.90 元。请核对测试记录。", false, null, false);
+                appendLog("probe：已发送 420【淘宝】与 421【银行】。可点击通知产生真实点击回调，或在筛选器核对 p_jev → p_final。");
+                break;
             default: break;
         }
         scheduleRefresh();
@@ -234,7 +266,8 @@ public final class MainActivity extends Activity {
     private boolean isScenario(String name) {
         switch (name) {
             case "batch": case "normal": case "ad": case "conflict": case "empty":
-            case "ongoing": case "group": case "update_ad": case "update_urgent": return true;
+            case "ongoing": case "group": case "update_ad": case "update_urgent":
+            case "attention_demo": case "probe": return true;
             default: return false;
         }
     }
@@ -252,7 +285,8 @@ public final class MainActivity extends Activity {
     }
 
     private void post(int id, String title, String text, boolean ongoing, String group, boolean summary) {
-        Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent open = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra("opened_sample", id);
         PendingIntent content = PendingIntent.getActivity(this, id, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(com.example.notificationdemo.sender.R.drawable.ic_notification)
@@ -284,7 +318,9 @@ public final class MainActivity extends Activity {
         ArrayList<Integer> ids = new ArrayList<>();
         for (StatusBarNotification item : notifications.getActiveNotifications()) {
             // Framework auto-group summaries are not one of the app's published samples.
-            if (item.getId() >= 101 && item.getId() <= 301) ids.add(item.getId());
+            if ((item.getId() >= 101 && item.getId() <= 301)
+                    || (item.getId() >= 410 && item.getId() <= 414)
+                    || item.getId() == 420 || item.getId() == 421) ids.add(item.getId());
         }
         Collections.sort(ids);
         activeStatus.setText(getString(R.string.active_sample_summary, ids.size(), ids.isEmpty() ? "无" : ids.toString()));

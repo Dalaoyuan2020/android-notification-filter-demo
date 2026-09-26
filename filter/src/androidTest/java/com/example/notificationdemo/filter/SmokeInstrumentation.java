@@ -50,7 +50,8 @@ public final class SmokeInstrumentation extends ModelInstrumentation {
     private String lastDump = "";
 
     @Override public void onCreate(Bundle arguments) {
-        modelSuite = arguments != null && "models".equals(arguments.getString("suite"));
+        modelSuite = arguments != null && ("models".equals(arguments.getString("suite"))
+                || "attention".equals(arguments.getString("suite")));
         super.onCreate(arguments);
     }
 

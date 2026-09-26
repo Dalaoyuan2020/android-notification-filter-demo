@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLException;
 
-/** Blocking HTTPS Chat Completions adapter. Caller owns consent, rules, and result freshness. */
+/** Blocking HTTPS Jev/Chat adapter. Caller owns consent, rules, and result freshness. */
 public final class ModelClient {
     public static final int MAX_INPUT_CHARS = 12000;
     public static final int MAX_REQUEST_BYTES = 65536;
@@ -62,13 +62,23 @@ public final class ModelClient {
         public final String error;
         public final long latencyMs;
         public final boolean success;
+        public final double probability;
+        public final boolean hasProbability;
 
         Result(DecisionEngine.Action action, String reason, String error, long latencyMs, boolean success) {
+            this(action, reason, error, latencyMs, success,
+                    success ? (action == DecisionEngine.Action.KEEP ? 1 : 0) : Double.NaN, false);
+        }
+
+        Result(DecisionEngine.Action action, String reason, String error, long latencyMs, boolean success,
+               double probability, boolean hasProbability) {
             this.action = action;
             this.reason = reason;
             this.error = error;
             this.latencyMs = latencyMs;
             this.success = success;
+            this.probability = probability;
+            this.hasProbability = hasProbability;
         }
     }
 
@@ -76,7 +86,13 @@ public final class ModelClient {
     interface ConnectionFactory { HttpsURLConnection open(URL endpoint) throws IOException; }
 
     public static Result classify(ModelConfig.Profile profile, DecisionEngine.Input input) {
-        return classify(profile, input, endpoint -> (HttpsURLConnection) endpoint.openConnection());
+        return classify(profile, input, input == null ? "" : input.packageName, "", 0.5);
+    }
+
+    public static Result classify(ModelConfig.Profile profile, DecisionEngine.Input input,
+                                  String appName, String recentBehavior, double threshold) {
+        return classify(profile, input, appName, recentBehavior, threshold,
+                endpoint -> (HttpsURLConnection) endpoint.openConnection());
     }
 
     public static DecisionEngine.Input connectionTestInput() {
@@ -87,6 +103,10 @@ public final class ModelClient {
 
     public static Result testConnection(ModelConfig.Profile profile) {
         return classify(profile, connectionTestInput());
+    }
+
+    public static Result testConnection(ModelConfig.Profile profile, double threshold) {
+        return classify(profile, connectionTestInput(), "通知测试发送器（合成样本）", "", threshold);
     }
 
     public static String validateProfile(ModelConfig.Profile profile) { return validateProfile(profile, true); }
@@ -102,13 +122,18 @@ public final class ModelClient {
         }
         if (required && (profile.baseUrl.isEmpty() || profile.model.isEmpty())) return "请填写HTTPS接口地址和模型标识。";
         if (!profile.baseUrl.isEmpty()) {
-            try { endpoint(profile.baseUrl); }
+            try { endpoint(profile); }
             catch (SafeFailure failure) { return "接口地址必须为有效HTTPS地址，且不得包含账号、查询参数或片段。"; }
         }
         return "";
     }
 
     static Result classify(ModelConfig.Profile profile, DecisionEngine.Input input, ConnectionFactory factory) {
+        return classify(profile, input, input == null ? "" : input.packageName, "", 0.5, factory);
+    }
+
+    static Result classify(ModelConfig.Profile profile, DecisionEngine.Input input,
+                           String appName, String recentBehavior, double threshold, ConnectionFactory factory) {
         long started = System.nanoTime();
         HttpsURLConnection connection = null;
         ScheduledFuture<?> timeoutTask = null;
@@ -119,49 +144,102 @@ public final class ModelClient {
             String validation = validateProfile(profile, true);
             if (!validation.isEmpty()) throw new SafeFailure("INVALID_PROFILE", validation);
             validateInput(input);
-            byte[] body = requestBody(profile, input);
+            if (!SystemOneProtocol.validThreshold(threshold)) throw new SafeFailure("INVALID_THRESHOLD", "保留阈值必须为0到1的有限数字");
+            appName = appName == null ? "" : appName;
+            recentBehavior = recentBehavior == null ? "" : recentBehavior;
+            if ((long) appName.length() + recentBehavior.length() + input.packageName.length()
+                    + input.title.length() + input.text.length() + input.category.length() > MAX_INPUT_CHARS) {
+                throw new SafeFailure("INPUT_TOO_LARGE", "完整通知与近期行为过长，未截断也未发送");
+            }
+            byte[] body;
+            if (profile.protocol == ModelConfig.Protocol.JEV_SYSTEMONE) {
+                try {
+                    body = SystemOneProtocol.requestBody(profile.model, appName, input.title, input.text, recentBehavior)
+                            .getBytes(StandardCharsets.UTF_8);
+                } catch (IllegalArgumentException invalid) {
+                    throw new SafeFailure("INPUT_TOO_LARGE", "完整通知无法在请求大小限额内发送，未截断也未发送");
+                }
+            } else {
+                body = requestBody(profile, input);
+            }
             if (body.length > MAX_REQUEST_BYTES) throw new SafeFailure("INPUT_TOO_LARGE", "完整通知超出请求限额，未发送");
-            connection = factory.open(endpoint(profile.baseUrl));
-            connection.setInstanceFollowRedirects(false);
-            connection.setUseCaches(false);
-            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            connection.setReadTimeout(READ_TIMEOUT_MS);
-            connection.setRequestMethod("POST");
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("Accept-Encoding", "identity");
-            if (!profile.apiKey.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + profile.apiKey);
-            connection.setFixedLengthStreamingMode(body.length);
-            HttpsURLConnection timedConnection = connection;
-            timeoutTask = DEADLINES.schedule(() -> {
-                expired.set(true);
-                timedConnection.disconnect();
-            }, REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            try (OutputStream output = connection.getOutputStream()) { output.write(body); }
-            int status = connection.getResponseCode();
-            if (status >= 300 && status <= 399) throw new SafeFailure("REDIRECT_BLOCKED", "接口返回重定向，已拒绝转发通知和密钥");
-            if (status < 200 || status > 299) throw new SafeFailure("HTTP_" + status, "接口返回HTTP " + status);
-            String contentType = connection.getContentType();
-            if (contentType == null || !contentType.toLowerCase(Locale.ROOT).split(";", 2)[0].trim().equals("application/json")) {
-                throw new SafeFailure("INVALID_CONTENT_TYPE", "接口没有返回JSON内容类型");
+            for (int retriesUsed = 0; ; retriesUsed++) {
+                ensureActive(started, expired);
+                connection = factory.open(endpoint(profile));
+                try {
+                    connection.setInstanceFollowRedirects(false);
+                    connection.setUseCaches(false);
+                    connection.setConnectTimeout(Math.max(1, RetryPolicy.timeoutMillis(CONNECT_TIMEOUT_MS, elapsed(started), REQUEST_TIMEOUT_MS)));
+                    connection.setReadTimeout(Math.max(1, RetryPolicy.timeoutMillis(READ_TIMEOUT_MS, elapsed(started), REQUEST_TIMEOUT_MS)));
+                    connection.setRequestMethod("POST");
+                    connection.setDoOutput(true);
+                    connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                    connection.setRequestProperty("Accept", "application/json");
+                    connection.setRequestProperty("Accept-Encoding", "identity");
+                    if (!profile.apiKey.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + profile.apiKey);
+                    connection.setFixedLengthStreamingMode(body.length);
+                    HttpsURLConnection timedConnection = connection;
+                    timeoutTask = DEADLINES.schedule(() -> {
+                        expired.set(true);
+                        timedConnection.disconnect();
+                    }, Math.max(1, RetryPolicy.remainingMillis(elapsed(started), REQUEST_TIMEOUT_MS)), TimeUnit.MILLISECONDS);
+                    try (OutputStream output = connection.getOutputStream()) { output.write(body); }
+                    int status = connection.getResponseCode();
+                    ensureActive(started, expired);
+                    if (status >= 300 && status <= 399) throw new SafeFailure("REDIRECT_BLOCKED", "接口返回重定向，已拒绝转发通知和密钥");
+                    long retryDelay = RetryPolicy.nextDelayMillis(status, retriesUsed, elapsed(started), REQUEST_TIMEOUT_MS,
+                            connection.getHeaderField("Retry-After"), System.currentTimeMillis());
+                    if (retryDelay >= 0) {
+                        if (timeoutTask != null) { timeoutTask.cancel(false); timeoutTask = null; }
+                        connection.disconnect();
+                        connection = null;
+                        try { Thread.sleep(retryDelay); }
+                        catch (InterruptedException cancelled) {
+                            Thread.currentThread().interrupt();
+                            throw new SafeFailure("INTERRUPTED", "重试等待已取消");
+                        }
+                        continue;
+                    }
+                    if (status == 401) throw new SafeFailure("HTTP_401", "API Key无效或没有接口权限，请检查密钥");
+                    if (status == 422) throw new SafeFailure("HTTP_422", "请求格式或输入不符合接口要求，请检查协议与模型配置");
+                    if (status < 200 || status > 299) throw new SafeFailure("HTTP_" + status, "接口返回HTTP " + status);
+                    String contentType = connection.getContentType();
+                    if (contentType == null || !contentType.toLowerCase(Locale.ROOT).split(";", 2)[0].trim().equals("application/json")) {
+                        throw new SafeFailure("INVALID_CONTENT_TYPE", "接口没有返回JSON内容类型");
+                    }
+                    String encoding = connection.getContentEncoding();
+                    if (encoding != null && !encoding.isEmpty() && !encoding.equalsIgnoreCase("identity")) {
+                        throw new SafeFailure("UNSUPPORTED_ENCODING", "接口返回了未支持的内容编码");
+                    }
+                    long declaredLength = connection.getContentLengthLong();
+                    if (declaredLength > MAX_RESPONSE_BYTES) throw new SafeFailure("RESPONSE_TOO_LARGE", "接口响应超出大小限额");
+                    byte[] response;
+                    try (InputStream inputStream = connection.getInputStream()) {
+                        response = readLimited(inputStream, started, expired);
+                    }
+                    ensureActive(started, expired);
+                    String decoded = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(response)).toString();
+                    Result result;
+                    if (profile.protocol == ModelConfig.Protocol.JEV_SYSTEMONE) {
+                        try {
+                            SystemOneProtocol.Decision decision = SystemOneProtocol.parseResponse(decoded, threshold);
+                            result = new Result(decision.keep ? DecisionEngine.Action.KEEP : DecisionEngine.Action.REMOVE,
+                                    cleanReason(decision.reason, profile.apiKey), "", elapsed(started), true,
+                                    decision.probability, decision.hasProbability);
+                        } catch (IllegalArgumentException invalid) {
+                            throw new SafeFailure("INVALID_RESPONSE", "Jev接口响应缺少有效保留概率或重要/广告选项");
+                        }
+                    } else {
+                        result = parseResponse(decoded, profile.apiKey, started);
+                    }
+                    ensureActive(started, expired);
+                    return result;
+                } finally {
+                    if (timeoutTask != null) { timeoutTask.cancel(false); timeoutTask = null; }
+                    if (connection != null) { connection.disconnect(); connection = null; }
+                }
             }
-            String encoding = connection.getContentEncoding();
-            if (encoding != null && !encoding.isEmpty() && !encoding.equalsIgnoreCase("identity")) {
-                throw new SafeFailure("UNSUPPORTED_ENCODING", "接口返回了未支持的内容编码");
-            }
-            long declaredLength = connection.getContentLengthLong();
-            if (declaredLength > MAX_RESPONSE_BYTES) throw new SafeFailure("RESPONSE_TOO_LARGE", "接口响应超出大小限额");
-            byte[] response;
-            try (InputStream inputStream = connection.getInputStream()) {
-                response = readLimited(inputStream, started, expired);
-            }
-            ensureActive(started, expired);
-            String decoded = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(response)).toString();
-            Result result = parseResponse(decoded, profile.apiKey, started);
-            ensureActive(started, expired);
-            return result;
         } catch (SafeFailure failure) {
             return failed(failure.code, failure.safeReason, started);
         } catch (SocketTimeoutException failure) {
@@ -211,6 +289,14 @@ public final class ModelClient {
             return new URI(normalized).toURL();
         } catch (URISyntaxException | IOException failure) {
             throw new SafeFailure("INVALID_ENDPOINT", "接口地址无效");
+        }
+    }
+
+    static URL endpoint(ModelConfig.Profile profile) throws SafeFailure {
+        if (profile.protocol == ModelConfig.Protocol.CHAT_COMPLETIONS) return endpoint(profile.baseUrl);
+        try { return new URL(SystemOneProtocol.endpoint(profile.baseUrl)); }
+        catch (IllegalArgumentException | IOException failure) {
+            throw new SafeFailure("INVALID_ENDPOINT", "Jev接口必须使用有效HTTPS地址");
         }
     }
 

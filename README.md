@@ -1,98 +1,120 @@
 # 通知筛选 Demo
 
-两个独立的原生 Android App，用于验证通知读取、判断和清除。v0.2.0 支持关键词、官方模型、中转站模型与双路对照四种策略；默认关键词且不发送网络请求。模型模式需手动配置兼容接口并允许远程判断，无内置 API Key 或默认模型厂商。最低 Android 8.0（API 26），当前 compile/target SDK 35，无第三方运行时依赖。
+**后端 Jev 管长期判断，手机本地管短时注意力。** v0.3.0 在原生 Android 通知监听器上加入 SystemOne 概率判断、本地衰减记忆和最多三路对照：先获得模型保留概率 `p_jev`，再用近期真实行为计算 `p_final`。
 
-## 给手机测试同学
+默认仍是**本机关键词策略、自动清除关闭、模型远程处理关闭、事件上传关闭、正文上传关闭**。近期行为摘要选项默认开启，但只有主动启用 JEV 模型请求后才随请求发送；单路连接测试会在点击按钮后单独发送固定合成消息。无内置 API Key。
 
-请打开 [APK 下载页](https://github.com/Dalaoyuan2020/android-notification-filter-demo/releases/latest)，下载 `notification-filter-demo.apk` 和 `notification-test-sender.apk`，安装两个 App；不用下载源码，也不用安装 Android Studio。
+项目包括两个独立 App：**通知筛选 Demo**负责监听与判断；**通知测试发送器**发布合成样本，且不联网。最低 Android 8.0（API 26），compile/target SDK 35，无第三方运行时依赖。
 
-具体操作和反馈格式见 [真机测试指南](docs/PHONE_TESTING.md)；配置模型后再按 [模型对比指南](docs/MODEL_TESTING.md) 测试。协作者 rui460 请先 [接受邀请](https://github.com/Dalaoyuan2020/android-notification-filter-demo/invitations)，代码修改与提交见 [协作开发指南](CONTRIBUTING.md)。当前仅通过 Android 15 模拟器验证，不代表所有品牌手机已经实测通过。
+## 开始测试
 
-仓库的 Actions 自动编译并运行规则测试、Android Lint。Actions 附件是临时开发构建，每次的调试签名可能不同；给队友安装时统一使用指定 Release 的 APK，避免混用签名导致覆盖安装失败。设备集成测试需另外运行，不能仅凭 Actions 构建通过就认定真机行为通过。
+- [下载指定 Release 的两个 APK](https://github.com/Dalaoyuan2020/android-notification-filter-demo/releases/latest)，不要把源码压缩包当成安装包。
+- 第一次安装看[手机测试指南](docs/PHONE_TESTING.md)，模型设置看[三路模型配置](docs/MODEL_TESTING.md)。
+- 演示“手动划掉淘宝样本后，淘宝概率下降、银行保持自身判断”，看[三分钟注意力演示](docs/ATTENTION_DEMO.md)。
+- 协作者 `rui460` 先[接受私有仓库邀请](https://github.com/Dalaoyuan2020/android-notification-filter-demo/invitations)；修改代码看[开发指南](CONTRIBUTING.md)。
 
-## 安装与使用
+v0.3.0 已完成 234 项纯 Java 检查和 Android 15 AOSP 模拟器上的 166 项检查；实际本机 HTTPS 演示中，淘宝探针 `0.7000 → 0.4734`，银行 `0.7000 → 0.7000`。构建、截图及边界见[本版验证记录](docs/VERIFICATION.md)。未进行实体手机测试，也没有使用真实凭据联调官方服务或自训部署；不能把 mock 结果当作这些验证结果。
 
-1. 安装筛选器和测试发送器两个 APK。
-2. 打开“通知筛选 Demo”，点击“开启通知使用权”，在系统设置里允许通知访问，返回后应显示“已授权 / 已连接”。这与允许发送通知是两种权限。
-3. 保持默认观察模式。打开“通知测试发送器”，允许发送通知，点击“发送一组验收样本”。
-4. 回筛选器看记录：可以看到原始标题、文本、来源包名和判断理由，此时不会移除通知。
-5. 在发送器中清空测试通知，回筛选器开启“自动清除”，然后重新发送验收样本。9 张样本中，只应清除两张广告通知；保留普通、紧急、持续和汇总通知。
+## 三条模型路线
 
-默认目标包名为 `com.sina.weibo,com.example.notificationdemo.sender`。微信 `com.tencent.mm` 默认不参与自动清除，但已授权时可在记录中观察系统提供的通知内容。修改包名和关键词后需点击“保存规则”。
+| 路线 | 新安装预设 | 协议 |
+|---|---|---|
+| TypeSafe 官方 | `https://api.typesafe.ai`；模型 `jev-latest` | JEV SystemOne |
+| Bocha 官方 | `https://jev.bocha.cn`；模型 `bocha-jev-v1` | JEV SystemOne |
+| 自建／自训中转 | 地址和模型 ID 留空，按实际部署填写 | 默认 JEV SystemOne，可显式改为 Chat Completions |
 
-默认保留词：`紧急,会议,重要,家人`。默认清除词：`热搜,推荐,优惠,广告`。规则顺序：非目标来源跳过 → 持续/不可清除/汇总/通话导航闹钟保护 → 保留词优先 → 清除词命中 → 未命中保留。
+三条路线分别保存地址、协议、模型 ID、标签和密钥。预设不是连接成功证明；自训中转需要实际可访问的部署，填写模型名不会完成训练或部署。v0.2.0 已有配置保留原值和 **Chat Completions** 协议，不会被静默改成 JEV；可在界面显式载入 TypeSafe／Bocha 预设，原密钥保留。
 
-自动开关只改变新到通知的处理方式；需要处理已经存在的通知时，点击“重新扫描现有通知”。“清空记录”仅清空本 App 日志，不清理系统通知。
+JEV 使用 `POST /v1/systemone`，按 `answers.keep.probabilities["重要"]` 获得 `p_jev`；只有 `choice` 时按重要／广告映射为 1／0，并在界面标明没有原始概率。保留阈值默认 `0.5`。API 细节及官方资料见[模型测试指南](docs/MODEL_TESTING.md)。
 
-## 两路模型判断
+五种策略为关键词、TypeSafe 单路、Bocha 单路、自训中转单路、多路对照。对照可勾选最多三路，并排显示原始／融合概率、耗时、结果与一致性，**始终不清除通知**。单路保存后先观察，需要删除时另行开启“自动清除”。
 
-官方和中转站分别保存 Base URL、模型 ID、版本标签及可选 API Key。当前仅实现兼容 Chat Completions 的 HTTPS JSON 接口，不把未确认的 JVE/JEV、1052 或 duorive 名称猜成某个厂商。服务实际地址和协议仍待提供；本仓库的仿真测试不等于这两项真实服务已经接通。
+## 本地短时注意力
 
-双路对照把同一条符合处理条件的通知依次交给两路接口，记录各自结论、理由、调用耗时与是否一致，始终只观察。单路模式在观察中确认效果后可手动开启自动清除。目标包名、保留关键词、持续通知等保护仍优先；未启用远程、配置/联网/响应失败默认保留，通知更新或配置修改后旧结果作废。保存模型设置会关闭自动清除。
+手机只把明确的行为计入衰减记忆：60 秒内点击 `y=1`、稍后点击 `y=0.7`、单条手动划掉（系统 reason 2）`y=0.05`、持续 30 分钟未处理 `y=0.2`。系统“全部清空”、来源 App 自行移除、监听器自动清除等其他原因不训练偏好。
 
-API Key 使用 Android Keystore 加密保存在本机；不提交到仓库或打进 APK。只有启用模型策略且允许远程判断后，才会发送符合条件的通知包名、标题、正文到配置的服务。连接测试仅发送固定合成样本。测试期请只把发送器列为目标。
+默认半衰期 30 分钟、融合权重 `w=1`；希望更缓慢遗忘时可手动设为 **1440 分钟**。同一个包下的 `【淘宝】`、`【银行】` 等标题前缀分别统计，新前缀从先验 `(1,1)` 开始，不继承包级偏好。注意力页可查看 `p_short` 最高／最低 5 项及非负有效证据数。
 
-## 处理边界
+每项从先验 `alpha=1, beta=1` 开始。设距上次更新的时间为 `dt`、半衰期为 `h`（两者使用相同单位），收到真实行为 `y` 时按以下公式更新：
 
-- 操作的是系统通知卡片，不是微信聊天数据；一张卡片内的多条消息无法逐条删改。
-- 通知发布后再判断，不能保证阻止已经发生的声音、振动和横幅。
-- 通知内容由来源 App 与系统决定；空内容、隐藏预览、验证码脱敏会限制可判断的信息。
-- Android 8–10 的结构化多消息通知保守地整卡保留；Android 11+ 解析当前消息列表。
-- 本机保留最近 150 条处理事件；记录中的正文超过 900 字符会截断，但关键词判断使用提取的完整文本。应用私有数据不参与备份和设备迁移。
-- “请求清除”不是成功。“已清除”需要同 key/同版本的系统移除回调与监听器清除原因；超时或其它原因记录为“未确认”。系统回调不提供具体发起清除的监听器身份，其他监听器同时清除的竞争不能完全区分。
-- 源 App 可以再次发布通知。受保护的通知和来源 App 自己的行为可能导致最终状态不同。
-- 验证环境是 Android 15 AOSP x86_64 模拟器；没有验证用户手机、微信/微博实际版本、厂商后台策略、锁屏/重启后的长期稳定性，也未进行商店上架验证。
+```text
+lambda  = 2^(-dt/h)
+alpha   = lambda * alpha + y
+beta    = lambda * beta + (1-y)
+p_short = alpha / (alpha + beta)；若两者之和为 0，则取 0.5
+n_raw   = alpha + beta - 2
+n       = max(0, n_raw)
 
-## 构建
+若 n = 0 或 w = 0：p_final = p_jev（原值直接返回）
+否则：p_final = sigmoid(logit(p_jev) + w * n/(n+3) * logit(p_short))
 
-需要 JDK 17、Android SDK Platform 35 与 Build Tools 35.0.0。配置 `JAVA_HOME`、`ANDROID_HOME`，或在 Android Studio 中打开该目录并让 IDE 配置 SDK。
+logit(p) = ln(clamp(p, 0.01, 0.99) / (1-clamp(p, 0.01, 0.99)))
+sigmoid(z) = 1 / (1 + exp(-z))
+```
+
+原始 `alpha`、`beta` 连同先验一起衰减，因此 `n_raw` 可能为负；只有非负有效 `n` 进入融合。只看快照时执行衰减，不增加虚构的 `y`。无证据或 `w=0` 的分支在 logit 裁剪前返回，连原始 0／1 都完全保持。
+
+默认 `h=30 分钟`、`w=1`、保留阈值 `0.5`；`p_final >= 阈值` 时保留，否则单路模型可建议清除。实际删除仍须开启自动清除；多路对照始终只观察。极值影响与演示判读见[注意力说明](docs/ATTENTION_DEMO.md)。
+
+“近期行为摘要”会从当前目标 App 的真实行为中选择变化最大的至多两项，随 JEV 请求发送，可能包含标题前缀。需要只观察本地融合效果时，关闭此摘要选项再保存。独立事件上传是另一个默认关闭的功能，启用后才向指定 HTTPS `/events` 服务发送事件；正文仍需单独选择。
+
+## 关键词基线
+
+1. 安装 `notification-filter-demo.apk` 和 `notification-test-sender.apk`。
+2. 在筛选器点“开启通知使用权”，返回确认已授权／已连接；在发送器点“开启通知权限”。
+3. 保持关键词策略、观察模式，把目标包名暂设为 `com.example.notificationdemo.sender` 并保存。
+4. 在发送器清空旧样本，再点“发送一组验收样本 · 9 张”；观察模式应保留全部 9 个对象。
+5. 再次清空发送器样本，开启自动清除并重发；默认关键词应仅清除 102、202，保留 101、103、104、105、200、201、203。
+
+默认目标为 `com.sina.weibo,com.example.notificationdemo.sender`；微信 `com.tencent.mm` 默认不参与清除。保留词为 `紧急,会议,重要,家人`，清除词为 `热搜,推荐,优惠,广告`。保留词和受保护通知优先；清除词仅用于关键词策略。模型失败、远程关闭或旧请求结果失效时保留通知。
+
+“重新扫描现有通知”按当前策略处理仍存在的卡片。**v0.3.0 中，验证记录的“清空”还会重置本地短时记忆和通知生命周期追踪**，适合重做演示；它不会清理系统通知。发送器的“清空本发送器的全部通知”只移除发送器样本，也不等于手动划掉行为。
+
+## 边界与数据
+
+- 操作单位是系统通知卡片，不是聊天消息；不能逐句改写来源 App 的合并通知，也不能保证拦住已发生的声音、振动或横幅。
+- 数据由来源 App 与系统提供；隐藏预览、缺失正文及验证码脱敏都会影响可判断信息。Android 8–10 的结构化多消息卡片保守保留。
+- “请求清除”不是成功，需要核对“已清除”的系统回调与发送器当前 ID。来源 App 可以重发；系统移除原因不能完全区分多个监听器同时操作的归因。
+- 默认本机记录最近 150 条事件；UI 日志正文超过 900 字符会截断。模型输入超过限额时保留，不靠截断内容作决定。
+- API Key 和事件服务 Token 使用 Android Keystore 加密。通知日志和设置不参与备份或设备迁移；短时记忆不保存通知正文，但本机验证日志仍可包含正文。
+- 关闭“自动清除”仅停止删除，不停止模型观察请求。停止远程请求应关闭并保存相应远程开关；完全停止读取需撤回系统通知使用权。
+
+## 构建与验证
+
+需要 JDK 17、Android SDK Platform 35、Build Tools 35.0.0。Gradle Wrapper 固定 8.13、Android Gradle Plugin 固定 8.11.1。
 
 ```powershell
 .\gradlew.bat :filter:assembleDebug :sender:assembleDebug :filter:assembleDebugAndroidTest :filter:lintDebug :sender:lintDebug
 ```
 
-Gradle Wrapper 固定 8.13，Android Gradle Plugin 固定 8.11.1；已固定 Wrapper 分发包 SHA-256。第一次构建需要网络下载构建依赖。过滤器仅在显式启用模型或点击连接测试时联网；发送器不联网。
+输出在 `filter/build/outputs/apk/debug/` 和 `sender/build/outputs/apk/debug/`。这是 debug 签名测试包；不同来源的 debug APK 可能签名不同。使用指定 Release 给队友测试，覆盖安装冲突时先记录旧结果再处理。
 
-APK 位于 `filter/build/outputs/apk/debug/` 和 `sender/build/outputs/apk/debug/`。当前交付的是 debug 签名测试包，不是商店发布包。重新编译时若签名不同，覆盖安装需先卸载旧版本（会移除原本地日志和授权）。
-
-## 测试
-
-规则测试：见 `tests/README.md`。设备集成测试在专用测试设备/模拟器上执行：
+三组纯 Java 测试与三套模拟器测试统一说明见 [tests/README.md](tests/README.md)。先运行单元测试，再按需要执行模拟器套件：
 
 ```powershell
+.\tests\run-unit-tests.ps1
 .\tests\run-device-smoke.ps1 -Device emulator-5554
-```
-
-此脚本安装两个 App 和测试 APK，为这两个测试 App 开启必要权限，并运行原生 Instrumentation。测试会临时修改筛选规则和模式、生成并清理发送器的测试通知，结束后恢复默认规则及观察模式。应使用专门的测试设备；测试期间默认规则包含微博。
-
-设备测试比较系统中真实的活动通知 ID，并检查监听器确认日志；不会把历史归档记录误计为当前通知。
-
-发送器 debug 场景入口：
-
-```powershell
-adb -s emulator-5554 shell am start -n com.example.notificationdemo.sender/.MainActivity --es scenario batch
-```
-
-支持 `clear`, `batch`, `normal`, `ad`, `conflict`, `empty`, `ongoing`, `group`, `update_ad`, `update_urgent`。Release 构建忽略调试场景入口。
-
-模型协议、配置存储及通知竞态测试在专用模拟器运行：
-
-```powershell
 .\tests\run-model-smoke.ps1 -Device emulator-5554
+.\tests\run-attention-smoke.ps1 -Device emulator-5554
 ```
 
-此脚本会清空过滤器的本机配置与日志，仅支持模拟器。测试使用仿真连接和合成结果，不请求真实模型服务。真实官方/中转服务需按模型指南另行测试。
+`run-attention-smoke.ps1` 额外需要**宿主机 Python 和 `cryptography` 包**，用于运行真正的 localhost HTTPS 合成服务与生成临时证书；该依赖不进入 APK。可用 `-Python` 指定已有 Python 解释器。临时 CA、私钥与证据放在 Git 仓库外的独立 work 目录，测试仍执行正常主机名验证，不修改生产 APK 的信任策略。
 
-## 项目结构
+设备脚本会安装测试包、调整测试授权并重置配置／日志，应使用可丢弃模拟器。注意力套件的 30 分钟忽略用例使用有界 debug 时间偏移，不代表真实等待或后台运行了 30 分钟。仿真模型结果和本地 HTTPS 请求不等于官方服务接通。Actions 构建与 Lint 通过也不等于实体手机通过。
 
-- `filter/`：原生界面、通知监听、规则引擎、两个模型配置、HTTPS 协议适配、加密凭据与本地日志。
-- `sender/`：独立的测试通知发送器。
-- `filter/src/androidTest/`：真实跨 App 通知集成测试。
-- `tests/`：纯 Java 规则测试与设备测试脚本。
+发送器 debug 场景包含原有 `batch` 等样本及新场景 `attention_demo`、`probe`：
 
-## 官方依据
+```powershell
+adb -s emulator-5554 shell am start -n com.example.notificationdemo.sender/.MainActivity --es scenario attention_demo
+```
 
-- [NotificationListenerService](https://developer.android.com/reference/android/service/notification/NotificationListenerService)
-- [通知结构](https://developer.android.com/reference/android/app/Notification)
-- [Android 15 敏感通知保护](https://developer.android.com/about/versions/15/behavior-changes-all#otp-redaction)
-- [侧载应用受限设置](https://support.google.com/android/answer/12623953)
+当前仓库没有 `attention_suite_v1.jsonl`，`suite_s1` 明确跳过，没有生成替代题库。**v0.4 的评测页面尚未实现。**
+
+## 目录与依据
+
+- `filter/`：通知监听、关键词和模型判断、短时记忆、概率融合、凭据与日志。
+- `sender/`：独立合成通知发送器。
+- `filter/src/androidTest/`、`tests/`：设备集成与纯 Java 测试。
+- `docs/`：手机验收、模型接入和注意力演示；版本变化见 [CHANGELOG](CHANGELOG.md)。
+
+Android 能力依据：[通知监听服务](https://developer.android.com/reference/android/service/notification/NotificationListenerService)、[通知结构](https://developer.android.com/reference/android/app/Notification)、[Android 15 敏感通知保护](https://developer.android.com/about/versions/15/behavior-changes-all#otp-redaction)。JEV 接口依据：[TypeSafe OpenAPI](https://api.typesafe.ai/openapi.json)、[TypeSafe 文档](https://api.typesafe.ai/docs)、[Bocha 官方接口说明](https://jev.bocha.cn/install/bocha-jev/SKILL.md)。

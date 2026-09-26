@@ -1,33 +1,3 @@
-device
-Performing Streamed Install
-Success
-Performing Streamed Install
-Success
-Performing Streamed Install
-Success
-PASS: listener connected
-CASE: observe batch preserves all samples and reports recommendations
-PASS: observe leaves every notification active [101, 102, 103, 104, 200, 105, 201, 202, 203]
-PASS: observe: no removal request or confirmation
-PASS: observe: recommendations for 102 and 202
-CASE: automatic batch removes only ads and confirms system removals
-PASS: auto: precisely 102 and 202 removed [101, 103, 104, 200, 105, 201, 203]
-PASS: auto: only IDs 102/202 have confirmed removals
-PASS: conflict 103 protected
-PASS: ongoing ad 105 protected
-PASS: group summary 200 protected
-PASS: empty-body notification 104 preserved
-CASE: package outside configured targets remains untouched
-PASS: auto: non-target 102 remains active [102]
-PASS: non-target: no removal request
-CASE: same notification ID changes from ad to urgent
-PASS: same-ID update is re-evaluated in observe mode
-PASS: auto: urgent replacement 301 stays active [301]
-PASS: 301 confirmed ad removal and later urgent keep both recorded
-PASS: default-setting synchronous commit succeeded
-PASS: on-disk preferences contain observe mode and all default rules
-PASS: finish in observe mode with default targets and keywords
-
 NotificationFilterDemo Android integration smoke test
 PASS: listener connected
 PASS: observe leaves every notification active [101, 102, 103, 104, 200, 105, 201, 202, 203]

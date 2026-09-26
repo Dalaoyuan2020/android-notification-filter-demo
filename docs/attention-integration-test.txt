@@ -1,0 +1,46 @@
+Actual localhost HTTPS Jev + real Android notification attention checks
+PASS: fresh install defaults to upload=false and uploadBody=false
+PASS: fresh attention defaults are half-life 30 minutes and weight 1
+PASS: fresh install has no attention service token
+PASS: OS default trust rejects disposable fixture certificate
+PASS: fixture-only TrustManager accepts actual HTTPS response
+PASS: actual Jev probability maps to KEEP at threshold 0.5
+PASS: encrypted attention token decrypts to original synthetic value
+PASS: attention preferences contain encrypted token but no plaintext
+PASS: saving service address/token alone does not enable upload or body sharing
+PASS: old saved profile without protocol remains Chat Completions
+PASS: legacy endpoint/model are preserved during migration
+PASS: migration does not enable remote transmission
+PASS: three route logs contain both original and final probabilities
+PASS: three-route COMPARE keeps active ad despite auto enabled
+PASS: COMPARE never requests cancellation
+PASS: comparison-proof.png: probability values and requested routes are actually visible on screen
+PASS: comparison-proof.png: visible probability bounds remain inside app viewport
+PASS: comparison-proof.png: actual visible probability UI screenshot saved
+PASS: two-route selection produces exactly two model results
+PASS: two-route COMPARE also preserves notifications
+PASS: SystemUI individually dismissed 414 with reason=2 and y=.05
+PASS: SystemUI individually dismissed 413 with reason=2 and y=.05
+PASS: SystemUI individually dismissed 412 with reason=2 and y=.05
+PASS: SystemUI individually dismissed 411 with reason=2 and y=.05
+PASS: SystemUI individually dismissed 410 with reason=2 and y=.05
+PASS: five actual dismiss callbacks updated Taobao memory
+PASS: unseen bank prefix has no inherited sender feedback
+PASS: Taobao final probability is below original real HTTPS .7
+PASS: bank final probability exactly preserves original .7
+PROBE: Taobao p_jev=0.7, p_final=0.4734324688976439; bank p_jev=0.7, p_final=0.7
+PASS: observation mode retains both probes
+PASS: attention-proof.png: probability values and requested routes are actually visible on screen
+PASS: attention-proof.png: visible probability bounds remain inside app viewport
+PASS: attention-proof.png: actual visible probability UI screenshot saved
+PASS: automatic cancellation uses learned p_final below threshold despite p_jev=.7
+PASS: own listener cancellation reason=10 never becomes a sixth observation
+PASS: automatic fused decision leaves bank probe active
+AUTO: Taobao original=0.7, final=0.4735324210230687, actual system removal reason=10; learning observations remain 5
+PASS: no ignore event before accelerated interval
+PASS: accelerated 30-minute still-active sample learns y=.2
+PASS: repeated accelerated sweep does not duplicate ignore
+NOTE: ignore test uses a bounded debug clock offset; no real 30-minute wait is claimed.
+PASS: teardown leaves keyword observe mode with no remote credentials
+
+ATTENTION RESULT: 40 checks passed, 0 failures

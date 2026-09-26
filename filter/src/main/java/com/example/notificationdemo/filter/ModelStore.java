@@ -44,19 +44,23 @@ public final class ModelStore {
                 return new ModelConfig(ModelConfig.Mode.OFFICIAL, false, null, null,
                         prefs.getLong("revision", 0), "模型策略无法识别，已停用模型发送；请重新选择并保存。");
             }
-            String error = "";
-            String officialKey = "";
-            String relayKey = "";
-            try { officialKey = decrypt(prefs.getString("official_key_cipher", ""), "official"); }
-            catch (GeneralSecurityException | IOException | RuntimeException failure) { error = STORAGE_ERROR; }
-            try { relayKey = decrypt(prefs.getString("relay_key_cipher", ""), "relay"); }
-            catch (GeneralSecurityException | IOException | RuntimeException failure) { error = STORAGE_ERROR; }
-            ModelConfig.Profile official = new ModelConfig.Profile(prefs.getString("official_label", "官方接口"),
-                    prefs.getString("official_url", ""), prefs.getString("official_model", ""), officialKey);
-            ModelConfig.Profile relay = new ModelConfig.Profile(prefs.getString("relay_label", "中转接口"),
-                    prefs.getString("relay_url", ""), prefs.getString("relay_model", ""), relayKey);
+            LoadedProfile official = loadProfile(prefs, "official", ModelConfig.presetTypeSafe());
+            LoadedProfile relay = loadProfile(prefs, "relay", ModelConfig.emptyRelay());
+            LoadedProfile bocha = loadProfile(prefs, "bocha", ModelConfig.presetBocha());
+            String error = official.error || relay.error || bocha.error ? STORAGE_ERROR : "";
+            double threshold = 0.5;
+            try {
+                threshold = Double.parseDouble(prefs.getString("threshold", "0.5"));
+                if (!SystemOneProtocol.validThreshold(threshold)) throw new IllegalArgumentException();
+            } catch (RuntimeException failure) {
+                threshold = 0.5;
+                error = "保留阈值无效，模型发送已停用；请重新填写并保存。";
+            }
+            boolean legacy = hasProfile(prefs, "official") || hasProfile(prefs, "relay");
             return new ModelConfig(mode, error.isEmpty() && prefs.getBoolean("remote_enabled", false),
-                    official, relay, prefs.getLong("revision", 0), error);
+                    official.profile, relay.profile, bocha.profile, threshold,
+                    prefs.getBoolean("compare_official", true), prefs.getBoolean("compare_relay", legacy),
+                    prefs.getBoolean("compare_bocha", !legacy), prefs.getLong("revision", 0), error);
         } catch (RuntimeException failure) {
             return new ModelConfig(mode, false, null, null, -1,
                     "模型设置无法读取，已停用模型发送；请重新填写并保存。");
@@ -67,20 +71,39 @@ public final class ModelStore {
     public static synchronized ModelConfig save(Context context, ModelConfig.Mode mode, boolean remoteEnabled,
                                                 ModelConfig.Profile official, ModelConfig.Profile relay)
             throws IOException {
+        ModelConfig current = load(context);
+        return save(context, mode, remoteEnabled, official, relay, current.bocha,
+                current.threshold, true, true, false);
+    }
+
+    public static synchronized ModelConfig save(Context context, ModelConfig.Mode mode, boolean remoteEnabled,
+                                                ModelConfig.Profile official, ModelConfig.Profile relay,
+                                                ModelConfig.Profile bocha, double threshold,
+                                                boolean compareOfficial, boolean compareRelay, boolean compareBocha)
+            throws IOException {
         if (mode == null) mode = ModelConfig.Mode.KEYWORDS;
         if (official == null) official = ModelConfig.emptyOfficial();
         if (relay == null) relay = ModelConfig.emptyRelay();
+        if (bocha == null) bocha = ModelConfig.presetBocha();
+        if (!SystemOneProtocol.validThreshold(threshold)) throw new IOException("保留阈值必须为0到1之间的有限数字。");
         validate(official, false);
         validate(relay, false);
+        validate(bocha, false);
         if (remoteEnabled && mode != ModelConfig.Mode.KEYWORDS) {
-            if (mode == ModelConfig.Mode.OFFICIAL || mode == ModelConfig.Mode.COMPARE) validate(official, true);
-            if (mode == ModelConfig.Mode.RELAY || mode == ModelConfig.Mode.COMPARE) validate(relay, true);
+            if (mode == ModelConfig.Mode.COMPARE && !compareOfficial && !compareRelay && !compareBocha) {
+                throw new IOException("对照模式至少选择一路接口。");
+            }
+            if (mode == ModelConfig.Mode.OFFICIAL || (mode == ModelConfig.Mode.COMPARE && compareOfficial)) validate(official, true);
+            if (mode == ModelConfig.Mode.RELAY || (mode == ModelConfig.Mode.COMPARE && compareRelay)) validate(relay, true);
+            if (mode == ModelConfig.Mode.BOCHA || (mode == ModelConfig.Mode.COMPARE && compareBocha)) validate(bocha, true);
         }
         String officialEncrypted;
         String relayEncrypted;
+        String bochaEncrypted;
         try {
             officialEncrypted = encrypt(official.apiKey, "official");
             relayEncrypted = encrypt(relay.apiKey, "relay");
+            bochaEncrypted = encrypt(bocha.apiKey, "bocha");
         } catch (GeneralSecurityException | IOException | RuntimeException failure) {
             throw new IOException("密钥加密失败，设置未保存；请检查设备安全存储。");
         }
@@ -91,13 +114,67 @@ public final class ModelStore {
         DemoStore.setAuto(context, false);
         boolean saved = prefs.edit().putString("mode", mode.name()).putBoolean("remote_enabled", enabled)
                 .putLong("revision", revision)
+                .putString("threshold", Double.toString(threshold))
+                .putBoolean("compare_official", compareOfficial).putBoolean("compare_relay", compareRelay)
+                .putBoolean("compare_bocha", compareBocha)
                 .putString("official_label", official.label).putString("official_url", official.baseUrl)
                 .putString("official_model", official.model).putString("official_key_cipher", officialEncrypted)
+                .putString("official_protocol", official.protocol.name())
                 .putString("relay_label", relay.label).putString("relay_url", relay.baseUrl)
-                .putString("relay_model", relay.model).putString("relay_key_cipher", relayEncrypted).commit();
+                .putString("relay_model", relay.model).putString("relay_key_cipher", relayEncrypted)
+                .putString("relay_protocol", relay.protocol.name())
+                .putString("bocha_label", bocha.label).putString("bocha_url", bocha.baseUrl)
+                .putString("bocha_model", bocha.model).putString("bocha_key_cipher", bochaEncrypted)
+                .putString("bocha_protocol", bocha.protocol.name()).commit();
         context.sendBroadcast(new Intent(ACTION_CHANGED).setPackage(context.getPackageName()));
         if (!saved) throw new IOException("模型设置写入失败；自动清除已关闭，请重试保存。");
-        return new ModelConfig(mode, enabled, official, relay, revision, "");
+        return new ModelConfig(mode, enabled, official, relay, bocha, threshold,
+                compareOfficial, compareRelay, compareBocha, revision, "");
+    }
+
+    private static boolean hasProfile(SharedPreferences prefs, String slot) {
+        return prefs.contains(slot + "_url") || prefs.contains(slot + "_model")
+                || prefs.contains(slot + "_label") || prefs.contains(slot + "_key_cipher");
+    }
+
+    private static LoadedProfile loadProfile(SharedPreferences prefs, String slot, ModelConfig.Profile preset) {
+        boolean error = false;
+        String secret = "";
+        try { secret = decrypt(prefs.getString(slot + "_key_cipher", ""), slot); }
+        catch (GeneralSecurityException | IOException | RuntimeException failure) { error = true; }
+        boolean existing = hasProfile(prefs, slot);
+        ModelConfig.Protocol protocol = existing ? ModelConfig.Protocol.CHAT_COMPLETIONS : preset.protocol;
+        try { protocol = ModelConfig.Protocol.valueOf(prefs.getString(slot + "_protocol", protocol.name())); }
+        catch (RuntimeException failure) { error = true; }
+        ModelConfig.Profile profile = new ModelConfig.Profile(prefs.getString(slot + "_label", preset.label),
+                prefs.getString(slot + "_url", existing ? "" : preset.baseUrl),
+                prefs.getString(slot + "_model", existing ? "" : preset.model), secret, protocol);
+        return new LoadedProfile(profile, error);
+    }
+
+    private static final class LoadedProfile {
+        final ModelConfig.Profile profile;
+        final boolean error;
+        LoadedProfile(ModelConfig.Profile profile, boolean error) { this.profile = profile; this.error = error; }
+    }
+
+    /** Same device key, separately bound authenticated slot; never includes raw crypto failures. */
+    static synchronized String encryptSecret(String secret, String slot) throws IOException {
+        try {
+            String value = secret == null ? "" : secret;
+            if (value.getBytes(StandardCharsets.UTF_8).length > 8192) throw new IOException("Credential too long");
+            return encrypt(value, slot);
+        }
+        catch (GeneralSecurityException | IOException | RuntimeException failure) {
+            throw new IOException("本机密钥加密失败，未保存凭据。");
+        }
+    }
+
+    static synchronized String decryptSecret(String value, String slot) throws IOException {
+        try { return decrypt(value, slot); }
+        catch (GeneralSecurityException | IOException | RuntimeException failure) {
+            throw new IOException("本机凭据无法解密，请重新填写。");
+        }
     }
 
     private static void validate(ModelConfig.Profile profile, boolean required) throws IOException {

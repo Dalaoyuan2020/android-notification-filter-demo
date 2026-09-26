@@ -31,11 +31,8 @@ jobs:
         run: |
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
           test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
-      - name: Rule checks
-        run: |
-          mkdir -p build/rule-tests
-          javac -encoding UTF-8 -d build/rule-tests filter/src/main/java/com/example/notificationdemo/filter/DecisionEngine.java tests/DecisionEngineTest.java
-          java -cp build/rule-tests DecisionEngineTest
+      - name: Rules, Jev protocol and short-term memory checks
+        run: bash ./tests/run-unit-tests.sh
       - name: Build and Android Lint
         run: bash ./gradlew --no-daemon :filter:assembleDebug :sender:assembleDebug :filter:assembleDebugAndroidTest :filter:lintDebug :sender:lintDebug
       - name: Upload development APKs

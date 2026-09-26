@@ -15,6 +15,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONException;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -25,14 +29,43 @@ public final class FilterService extends NotificationListenerService {
     interface Classifier {
         ModelClient.Result classify(ModelConfig.Profile profile, DecisionEngine.Input input);
     }
-    private static volatile Classifier classifier = ModelClient::classify;
+    private static volatile Classifier classifier;
+    interface RichClassifier {
+        ModelClient.Result classify(ModelConfig.Profile profile, DecisionEngine.Input input,
+                String appName, String recentBehavior, double threshold);
+    }
+    private static volatile RichClassifier richClassifier;
+    static void setRichClassifierForTests(RichClassifier replacement) {
+        requireDebugService();
+        richClassifier = replacement;
+    }
+    private static void requireDebugService() {
+        FilterService service = instance;
+        if (service == null || (service.getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            throw new IllegalStateException("Test hook requires connected debug service");
+        }
+    }
+    public static void clearAttentionTracking() {
+        FilterService service = instance;
+        if (service == null) return;
+        Runnable clear = () -> { if (service.attention != null) service.attention.clear(); };
+        if (Looper.myLooper() == Looper.getMainLooper()) clear.run(); else service.main.post(clear);
+    }
+    static void sweepAttentionForTests(long elapsedOffsetMs) {
+        requireDebugService();
+        if (elapsedOffsetMs < 0 || elapsedOffsetMs > AttentionTracker.IGNORE_AFTER_MS + 1000) {
+            throw new IllegalArgumentException("Invalid test clock offset");
+        }
+        instance.attention.sweep(System.currentTimeMillis() + elapsedOffsetMs);
+    }
     static void setClassifierForTests(Classifier replacement) {
         FilterService service = instance;
         if (service == null || (service.getApplicationInfo().flags
                 & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
             throw new IllegalStateException("Test hook requires connected debug service");
         }
-        classifier = replacement == null ? ModelClient::classify : replacement;
+        classifier = replacement;
     }
     private static final long CONFIRM_TIMEOUT_MS = 3500;
     private static final long REBIND_COOLDOWN_MS = 60000;
@@ -43,6 +76,14 @@ public final class FilterService extends NotificationListenerService {
     private final Map<String, ModelJob> modelJobs = new LinkedHashMap<>();
     private final ThreadPoolExecutor modelWorkers = new ThreadPoolExecutor(2, 2, 0,
             TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(24));
+    private AttentionTracker attention;
+    private final Runnable attentionSweep = new Runnable() {
+        @Override public void run() {
+            if (!connected || attention == null) return;
+            attention.sweep(System.currentTimeMillis());
+            main.postDelayed(this, 60000);
+        }
+    };
     private volatile boolean connected;
     private boolean rebindAttempted;
 
@@ -62,6 +103,9 @@ public final class FilterService extends NotificationListenerService {
         super.onListenerConnected();
         connected = true;
         instance = this;
+        attention = new AttentionTracker(this);
+        main.removeCallbacks(attentionSweep);
+        main.post(attentionSweep);
         DemoStore.notifyChanged(this);
         scanActive();
     }
@@ -71,6 +115,7 @@ public final class FilterService extends NotificationListenerService {
         if (instance == this) instance = null;
         abandonPending("监听连接已断开，无法确认系统清除结果");
         abandonModels();
+        main.removeCallbacks(attentionSweep);
         DemoStore.notifyChanged(this);
         // One attempt per service lifetime, plus a process-wide cooldown across recreations.
         long now = SystemClock.elapsedRealtime();
@@ -103,6 +148,7 @@ public final class FilterService extends NotificationListenerService {
 
     @Override public void onNotificationRemoved(StatusBarNotification sbn, RankingMap rankingMap, int reason) {
         if (sbn == null) return;
+        if (attention != null) attention.removed(sbn, reason);
         ModelJob job = modelJobs.get(sbn.getKey());
         if (job != null && job.sbn.getPostTime() == sbn.getPostTime()) {
             job.obsolete = true;
@@ -126,6 +172,7 @@ public final class FilterService extends NotificationListenerService {
             if (notifications != null) {
                 for (StatusBarNotification sbn : notifications) process(sbn);
             }
+            if (attention != null) { attention.reconcile(notifications); attention.sweep(System.currentTimeMillis()); }
         } catch (RuntimeException e) {
             DemoStore.addLog(this, getPackageName(), "扫描未完成", "", "未确认",
                     "无法读取当前通知，请检查通知使用权及服务连接（" + e.getClass().getSimpleName() + "）", "");
@@ -161,6 +208,7 @@ public final class FilterService extends NotificationListenerService {
         DecisionEngine.Input input = new DecisionEngine.Input(sbn.getPackageName(), title, text,
                 sbn.isOngoing(), sbn.isClearable(),
                 (notification.flags & Notification.FLAG_GROUP_SUMMARY) != 0, notification.category);
+        if (attention != null) attention.posted(sbn, input);
         DecisionEngine.Rules rules = new DecisionEngine.Rules(DemoStore.getTargets(this),
                 DemoStore.getKeepWords(this), DemoStore.getBlockWords(this));
         ModelConfig config = ModelStore.load(this);
@@ -238,18 +286,18 @@ public final class FilterService extends NotificationListenerService {
         modelJobs.put(sbn.getKey(), job);
         try {
             modelWorkers.execute(() -> {
-                if (!job.isValid()) { main.post(() -> finishModel(job, null, null)); return; }
-                ModelClient.Result official = null;
-                ModelClient.Result relay = null;
-                if (config.mode == ModelConfig.Mode.OFFICIAL || config.mode == ModelConfig.Mode.COMPARE) {
-                    official = classifier.classify(config.official, input);
+                List<ModelClient.Result> results = new ArrayList<>();
+                for (ModelConfig.Profile profile : job.profiles) {
+                    if (!job.isValid()) break;
+                    RichClassifier rich = richClassifier;
+                    Classifier legacy = classifier;
+                    ModelClient.Result result = rich != null
+                            ? rich.classify(profile, input, job.appName, job.recentBehavior, config.threshold)
+                            : legacy != null ? legacy.classify(profile, input)
+                            : ModelClient.classify(profile, input, job.appName, job.recentBehavior, config.threshold);
+                    results.add(result);
                 }
-                if (job.isValid() && (config.mode == ModelConfig.Mode.RELAY || config.mode == ModelConfig.Mode.COMPARE)) {
-                    relay = classifier.classify(config.relay, input);
-                }
-                ModelClient.Result finalOfficial = official;
-                ModelClient.Result finalRelay = relay;
-                main.post(() -> finishModel(job, finalOfficial, finalRelay));
+                main.post(() -> finishModel(job, results));
             });
         } catch (RejectedExecutionException full) {
             modelJobs.remove(sbn.getKey());
@@ -258,7 +306,7 @@ public final class FilterService extends NotificationListenerService {
         }
     }
 
-    private void finishModel(ModelJob job, ModelClient.Result official, ModelClient.Result relay) {
+    private void finishModel(ModelJob job, List<ModelClient.Result> results) {
         boolean valid = job.isValid() && modelJobs.get(job.sbn.getKey()) == job;
         if (modelJobs.get(job.sbn.getKey()) == job) modelJobs.remove(job.sbn.getKey());
         if (!valid) {
@@ -275,22 +323,52 @@ public final class FilterService extends NotificationListenerService {
             modelLog(job.sbn, job.input, "保留", "模型返回后无法复查系统通知，默认保留");
             return;
         }
+        JSONArray models = new JSONArray();
+        ShortTermMemory.Entry shortMemory = AttentionStore.get(this, job.input.packageName, job.input.title, job.appName);
+        AttentionStore.Config attentionConfig = AttentionStore.loadConfig(this);
+        boolean allSuccess = !job.profiles.isEmpty() && results.size() == job.profiles.size();
+        Boolean firstKeep = null;
+        boolean agreement = true;
+        boolean selectedKeep = true;
+        StringBuilder reasons = new StringBuilder();
+        for (int i = 0; i < job.profiles.size(); i++) {
+            ModelConfig.Profile profile = job.profiles.get(i);
+            ModelClient.Result result = i < results.size() ? results.get(i) : null;
+            boolean success = result != null && result.success && Double.isFinite(result.probability);
+            allSuccess &= success;
+            double pJev = success ? result.probability : Double.NaN;
+            double pFinal = success ? AttentionMath.fuse(pJev, shortMemory.alpha, shortMemory.beta, attentionConfig.weight) : Double.NaN;
+            boolean keep = !success || pFinal >= job.config.threshold;
+            if (i == 0) {
+                selectedKeep = keep;
+                if (attention != null) attention.prediction(job.sbn.getKey(), pJev, pFinal);
+            }
+            if (firstKeep == null) firstKeep = keep;
+            else if (firstKeep != keep) agreement = false;
+            try {
+                models.put(new JSONObject().put("label", redact(profile.label, profile.apiKey))
+                        .put("model", redact(profile.model, profile.apiKey)).put("protocol", profile.protocol.name())
+                        .put("p_jev", success ? pJev : JSONObject.NULL).put("p_final", success ? pFinal : JSONObject.NULL)
+                        .put("has_probability", success && result.hasProbability)
+                        .put("latency_ms", result == null ? 0 : result.latencyMs)
+                        .put("action", keep ? "KEEP" : "REMOVE").put("success", success)
+                        .put("error", result == null ? "INCOMPLETE" : result.error)
+                        .put("reason", result == null ? "请求未完成" : result.reason)
+                        .put("p_short", shortMemory.pShort).put("n", shortMemory.effectiveCount));
+            } catch (JSONException invalid) { allSuccess = false; selectedKeep = true; }
+            if (reasons.length() > 0) reasons.append("；");
+            reasons.append(describeModel("", profile, result));
+        }
         if (job.config.mode == ModelConfig.Mode.COMPARE) {
-            String officialText = describeModel("官方", job.config.official, official);
-            String relayText = describeModel("中转", job.config.relay, relay);
-            boolean comparable = official != null && relay != null && official.success && relay.success;
-            String comparison = !comparable ? "存在失败，本次不能比较" : official.action == relay.action ? "两路结论一致" : "两路结论不同";
-            modelLog(job.sbn, job.input, "模型对照", officialText + "\n" + relayText + "\n" + comparison + "；对照模式只观察");
+            String comparison = !allSuccess ? "存在失败" : agreement ? "一致" : "不同";
+            DemoStore.addModelLog(this, job.input, "模型对照", "融合后结论" + comparison + "；对照只观察",
+                    job.sbn.getKey(), models, comparison);
             return;
         }
-        boolean isOfficial = job.config.mode == ModelConfig.Mode.OFFICIAL;
-        ModelClient.Result result = isOfficial ? official : relay;
-        String reason = describeModel(isOfficial ? "官方" : "中转", isOfficial ? job.config.official : job.config.relay, result);
-        if (result != null && result.success && result.action == DecisionEngine.Action.REMOVE) {
-            removeIfAllowed(job.sbn, job.input, reason);
-        } else {
-            modelLog(job.sbn, job.input, "保留", reason);
-        }
+        String reason = reasons.toString();
+        DemoStore.addModelLog(this, job.input, selectedKeep || !allSuccess ? "保留" : "建议清除",
+                reason, job.sbn.getKey(), models, null);
+        if (allSuccess && !selectedKeep) removeIfAllowed(job.sbn, job.input, "短时注意力融合后低于阈值；" + reason);
     }
 
     private static String describeModel(String strategy, ModelConfig.Profile profile, ModelClient.Result result) {
@@ -340,16 +418,30 @@ public final class FilterService extends NotificationListenerService {
         final DecisionEngine.Input input;
         final ModelConfig config;
         final long ruleRevision;
+        final long attentionRevision;
+        final String appName, recentBehavior;
+        final List<ModelConfig.Profile> profiles = new ArrayList<>();
         volatile boolean obsolete;
         ModelJob(StatusBarNotification sbn, DecisionEngine.Input input, ModelConfig config) {
             this.sbn = sbn;
             this.input = input;
             this.config = config;
             this.ruleRevision = DemoStore.getDecisionRevision(FilterService.this);
+            this.attentionRevision = AttentionStore.loadConfig(FilterService.this).revision;
+            this.appName = attention == null ? input.packageName : attention.appName(input.packageName);
+            this.recentBehavior = AttentionStore.recentBehavior(FilterService.this);
+            if (config.mode == ModelConfig.Mode.COMPARE) {
+                if (config.compareOfficial) profiles.add(config.official);
+                if (config.compareBocha) profiles.add(config.bocha);
+                if (config.compareRelay) profiles.add(config.relay);
+            } else if (config.mode == ModelConfig.Mode.OFFICIAL) profiles.add(config.official);
+            else if (config.mode == ModelConfig.Mode.BOCHA) profiles.add(config.bocha);
+            else if (config.mode == ModelConfig.Mode.RELAY) profiles.add(config.relay);
         }
         boolean isValid() {
             return !obsolete && connected && config.revision == ModelStore.getRevision(FilterService.this)
-                    && ruleRevision == DemoStore.getDecisionRevision(FilterService.this);
+                    && ruleRevision == DemoStore.getDecisionRevision(FilterService.this)
+                    && attentionRevision == AttentionStore.loadConfig(FilterService.this).revision;
         }
     }
 

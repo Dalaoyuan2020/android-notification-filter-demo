@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
@@ -23,6 +24,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -219,9 +221,13 @@ public final class MainActivity extends Activity {
         strategySummary = text("", 13, MUTED, false);
         card.addView(strategySummary);
         addSpace(card, 14);
-        Button settings = button("配置模型与双路对照", false);
+        Button settings = button("配置模型与三路对照", false);
         settings.setOnClickListener(view -> startActivity(new Intent(this, ModelSettingsActivity.class)));
         card.addView(settings, fullWidth());
+        addSpace(card, 8);
+        Button attention = button("短时注意力 · 行为与上传设置", false);
+        attention.setOnClickListener(view -> startActivity(new Intent(this, AttentionActivity.class)));
+        card.addView(attention, fullWidth());
     }
 
     private void makeRulesCard(LinearLayout parent) {
@@ -305,7 +311,7 @@ public final class MainActivity extends Activity {
         modeValue.setTextColor(automatic ? AMBER : TEAL);
         modeValue.setBackground(background(automatic ? SOFT_AMBER : SOFT_TEAL, 30, 0));
         modeDescription.setText(comparison
-                ? "双路对照只记录两路判断，绝不发起清除。切换策略并保存后，需重新手动开启自动清除。"
+                ? "多路对照只记录选定路线的判断，绝不发起清除。切换策略并保存后，需重新手动开启自动清除。"
                 : !allowsAutomatic(modelConfig)
                 ? "当前模型策略尚未开启远程处理，或配置存储不可用；自动清除暂不可用。"
                 : automatic
@@ -317,14 +323,18 @@ public final class MainActivity extends Activity {
         updatingSwitch = false;
         String route = modelConfig.mode == ModelConfig.Mode.KEYWORDS ? "关键词 · 本机规则"
                 : modelConfig.mode == ModelConfig.Mode.OFFICIAL ? "官方模型 · " + profileLabel(modelConfig.official)
+                : modelConfig.mode == ModelConfig.Mode.BOCHA ? "Bocha 模型 · " + profileLabel(modelConfig.bocha)
                 : modelConfig.mode == ModelConfig.Mode.RELAY ? "中转模型 · " + profileLabel(modelConfig.relay)
-                : "双路对照 · 只观察，不清除";
+                : "多路对照 · 只观察，不清除";
         String remote = modelConfig.mode == ModelConfig.Mode.KEYWORDS
                 ? "当前在本机处理通知，不调用远程模型。"
                 : modelConfig.remoteEnabled
                 ? "远程处理已开启：目标通知的包名、标题、正文和类别可发送到您配置的服务。"
                 : "远程处理已关闭：保留通知，不发送；不回退执行关键词清除。";
+        AttentionStore.Config attention = AttentionStore.loadConfig(this);
         strategySummary.setText(route + "\n" + remote
+                + "\n近期行为摘要：" + (attention.recentBehaviorEnabled ? "开启" : "关闭")
+                + " · 独立事件上传：" + (attention.uploadEnabled ? "开启" : "关闭")
                 + (modelConfig.storageError.isEmpty() ? "" : "\n密钥存储不可用，请进入配置页检查。"));
         renderLogs();
     }
@@ -391,9 +401,121 @@ public final class MainActivity extends Activity {
             }
             addSpace(item, 9);
             item.addView(text("原因 · " + entry.optString("reason", "无说明"), 12, MUTED, false));
+            JSONArray modelResults = entry.optJSONArray("models");
+            if (modelResults != null && modelResults.length() > 0) {
+                renderModelResults(item, modelResults, entry.optString("comparison", ""));
+            }
             logList.addView(item, fullWidth());
             if (i < Math.min(count, MAX_VISIBLE_LOGS) - 1) addSpace(logList, 10);
         }
+    }
+
+    private void renderModelResults(LinearLayout parent, JSONArray results, String comparison) {
+        addSpace(parent, 12);
+        if (!comparison.isEmpty()) {
+            parent.addView(text("路线结论 · " + comparison, 12, INK, true));
+            addSpace(parent, 8);
+        }
+        renderProbabilityOverview(parent, results);
+        addSpace(parent, 8);
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(true);
+        LinearLayout columns = row();
+        columns.setGravity(Gravity.TOP);
+        scroll.addView(columns, new HorizontalScrollView.LayoutParams(-2, -2));
+        for (int i = 0; i < Math.min(3, results.length()); i++) {
+            JSONObject model = results.optJSONObject(i);
+            if (model == null) continue;
+            LinearLayout box = column();
+            box.setPadding(dp(12), dp(12), dp(12), dp(12));
+            box.setBackground(background(Color.WHITE, 10, BORDER));
+            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(218), -2);
+            size.setMarginEnd(dp(8));
+            columns.addView(box, size);
+            box.addView(text(model.optString("label", "模型路线"), 14, INK, true));
+            addSpace(box, 5);
+            box.addView(text(model.optString("model", "") + "\n" + model.optString("protocol", ""), 11, MUTED, false));
+            addSpace(box, 10);
+            double original = model.optDouble("p_jev", Double.NaN);
+            double fused = model.optDouble("p_final", Double.NaN);
+            String arrow = "＝";
+            int probabilityColor = MUTED;
+            if (Double.isFinite(original) && Double.isFinite(fused)) {
+                double difference = fused - original;
+                arrow = difference > 0.05 ? "↑" : difference < -0.05 ? "↓" : "＝";
+                probabilityColor = difference > 0.05 ? TEAL : difference < -0.05 ? AMBER : INK;
+            }
+            box.addView(text("p_jev " + probability(original) + "\n→ p_final " + probability(fused) + "  " + arrow,
+                    15, probabilityColor, true));
+            if (!model.optBoolean("has_probability", false) && model.optBoolean("success", false)) {
+                addSpace(box, 5);
+                box.addView(text("无原始概率 · 由 choice 换算", 11, AMBER, false));
+            }
+            addSpace(box, 10);
+            String action = model.optString("action", "");
+            String decision = "KEEP".equals(action) ? "保留" : "REMOVE".equals(action) ? "建议清除" : "未完成";
+            boolean success = model.optBoolean("success", false);
+            box.addView(text((success ? decision : "请求失败 · 保留") + " · "
+                    + model.optLong("latency_ms", 0) + " ms", 12, success ? TEAL : AMBER, true));
+            addSpace(box, 7);
+            box.addView(text(success ? model.optString("reason", "") : model.optString("error", "无详细错误"),
+                    11, MUTED, false));
+        }
+        parent.addView(scroll, fullWidth());
+    }
+
+    private void renderProbabilityOverview(LinearLayout parent, JSONArray results) {
+        LinearLayout overview = row();
+        overview.setGravity(Gravity.TOP);
+        int count = Math.min(3, results.length());
+        for (int i = 0; i < count; i++) {
+            JSONObject model = results.optJSONObject(i);
+            if (model == null) {
+                continue;
+            }
+            LinearLayout box = column();
+            box.setPadding(dp(6), dp(9), dp(6), dp(9));
+            box.setBackground(background(Color.WHITE, 8, BORDER));
+            LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
+            if (i < count - 1) {
+                size.setMarginEnd(dp(4));
+            }
+            overview.addView(box, size);
+            addOverviewLine(box, model.optString("label", "模型路线"), 12, INK, true);
+            addSpace(box, 7);
+            boolean success = model.optBoolean("success", false);
+            boolean hasProbability = model.optBoolean("has_probability", false);
+            addOverviewLine(box, success && !hasProbability ? "choice 换算" : "p_jev", 11, MUTED, false);
+            double original = model.optDouble("p_jev", Double.NaN);
+            double fused = model.optDouble("p_final", Double.NaN);
+            addOverviewLine(box, probability(original), 12, INK, true);
+            String arrow = "＝";
+            int color = INK;
+            if (Double.isFinite(original) && Double.isFinite(fused)) {
+                double difference = fused - original;
+                arrow = difference > 0.05 ? "↑" : difference < -0.05 ? "↓" : "＝";
+                color = difference > 0.05 ? TEAL : difference < -0.05 ? AMBER : INK;
+            }
+            addSpace(box, 5);
+            addOverviewLine(box, arrow + " p_final", 11, color, false);
+            addOverviewLine(box, probability(fused), 12, color, true);
+            addSpace(box, 7);
+            addOverviewLine(box, model.optLong("latency_ms", 0) + " ms", 11, MUTED, false);
+            String action = model.optString("action", "KEEP");
+            addOverviewLine(box, success ? action : "失败 · KEEP", 11, success ? TEAL : AMBER, true);
+        }
+        parent.addView(overview, fullWidth());
+    }
+
+    private void addOverviewLine(LinearLayout parent, String value, float size, int color, boolean bold) {
+        TextView line = text(value, size, color, bold);
+        line.setSingleLine(true);
+        line.setEllipsize(TextUtils.TruncateAt.END);
+        parent.addView(line, fullWidth());
+    }
+
+    private static String probability(double value) {
+        return Double.isFinite(value) ? String.format(Locale.CHINA, "%.3f", value) : "—";
     }
 
     private boolean hasNotificationAccess() {

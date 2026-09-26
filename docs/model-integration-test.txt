@@ -1,102 +1,3 @@
-device
-Performing Streamed Install
-Success
-Performing Streamed Install
-Success
-Performing Streamed Install
-Success
-Success
-PASS: listener connected with no-network classifier installed
-CASE: valid response and isolated request profiles
-PASS: valid REMOVE is accepted
-PASS: valid KEEP is accepted
-PASS: official endpoint appends chat/completions exactly once
-PASS: relay endpoint retains configured path and trims trailing slash
-PASS: profiles use their own Authorization values
-PASS: profiles use their own model names
-PASS: request is nonstreaming POST with structured JSON response
-PASS: notification instructions remain data in a separate user message
-PASS: credentials are absent from JSON request bodies
-PASS: transport disables redirect following and sets finite timeouts
-PASS: complete endpoint is not duplicated and empty key sends no Authorization
-CASE: strict model response protocol
-PASS: strict response rejects unknown action
-PASS: strict response rejects lowercase action
-PASS: strict response rejects missing reason
-PASS: strict response rejects empty reason
-PASS: strict response rejects numeric reason
-PASS: strict response rejects boolean action
-PASS: strict response rejects extra decision field
-PASS: strict response rejects duplicate action
-PASS: strict response rejects array decision
-PASS: strict response rejects markdown fences
-PASS: strict response rejects trailing decision content
-PASS: strict response rejects unescaped newline in JSON string
-PASS: strict response rejects invalid JSON escape
-PASS: strict response rejects overlong reason
-PASS: truncated completion preserves
-PASS: multiple choices preserve
-PASS: message tool_calls preserves
-PASS: message function_call preserves
-PASS: message refusal preserves
-PASS: non-JSON response preserves
-CASE: transport errors and unsafe endpoints preserve
-PASS: HTTP 301 preserves without redirect or secret body
-PASS: HTTP 302 preserves without redirect or secret body
-PASS: HTTP 307 preserves without redirect or secret body
-PASS: HTTP 401 preserves without redirect or secret body
-PASS: HTTP 429 preserves without redirect or secret body
-PASS: HTTP 500 preserves without redirect or secret body
-PASS: timeout preserves without leaking exception text
-PASS: non-JSON content type preserves
-PASS: unsupported content encoding preserves
-PASS: oversized response preserves
-PASS: unsafe URL rejected before transport: http://relay.invalid/v1
-PASS: unsafe URL rejected before transport: https://u:p@relay.invalid/v1
-PASS: unsafe URL rejected before transport: https://relay.invalid/v1?secret=x
-PASS: unsafe URL rejected before transport: https://relay.invalid/v1#fragment
-PASS: oversized notification preserves before transport
-CASE: encrypted profile storage and revision
-PASS: saving profiles advances revision and disables automatic removal
-PASS: profiles round-trip independently through Android Keystore
-PASS: synthetic credentials are absent from plaintext preference/files content
-PASS: swapped encrypted credentials fail authentication and disable transmission
-PASS: unknown strategy fails closed without keyword fallback
-CASE: remote opt-in and local protections precede transmission
-PASS: no opt-in preserves ad and sends nothing
-PASS: remote consent gate prevents transmission
-PASS: keep-word, empty body and ongoing protections preserve
-PASS: local protections prevent transmission
-PASS: non-target notification is not transmitted
-CASE: official model remove is confirmed by Android
-PASS: official successful REMOVE uses listener cancellation
-CASE: relay model uses relay profile only
-PASS: relay KEEP overrides keyword ad match
-PASS: relay mode calls configured relay endpoint
-CASE: HTTP failure keeps a live notification
-PASS: model HTTP never falls back to keyword deletion
-PASS: HTTP has no cancellation request
-PASS: model timeout never falls back to keyword deletion
-PASS: timeout has no cancellation request
-PASS: model unknown action never falls back to keyword deletion
-PASS: unknown action has no cancellation request
-CASE: COMPARE never cancels even with auto enabled
-PASS: COMPARE preserves even when both models say REMOVE and auto is true
-PASS: COMPARE uses both profiles and never requests cancellation
-CASE: delayed REMOVE cannot delete urgent replacement
-PASS: old REMOVE cannot cancel urgent replacement with same ID
-PASS: updated notification has no cancellation request
-CASE: configuration change invalidates in-flight REMOVE
-PASS: profile revision invalidates old REMOVE even after auto re-enabled
-PASS: configuration change yields no cancellation
-CASE: auto off then on invalidates in-flight REMOVE
-PASS: off/on auto toggle cannot resurrect old REMOVE
-PASS: auto revision change yields no cancellation
-CASE: rule change invalidates in-flight REMOVE
-PASS: rule change invalidates old REMOVE
-PASS: rule revision change yields no cancellation
-PASS: teardown durably restores keywords, no remote consent, no credentials, observe mode
-
 Model protocol and Android notification integration (synthetic transport only)
 PASS: listener connected with no-network classifier installed
 PASS: valid REMOVE is accepted
@@ -134,8 +35,10 @@ PASS: HTTP 301 preserves without redirect or secret body
 PASS: HTTP 302 preserves without redirect or secret body
 PASS: HTTP 307 preserves without redirect or secret body
 PASS: HTTP 401 preserves without redirect or secret body
+PASS: HTTP 422 preserves without redirect or secret body
 PASS: HTTP 429 preserves without redirect or secret body
 PASS: HTTP 500 preserves without redirect or secret body
+PASS: HTTP 529 preserves without redirect or secret body
 PASS: timeout preserves without leaking exception text
 PASS: non-JSON content type preserves
 PASS: unsupported content encoding preserves
@@ -145,6 +48,35 @@ PASS: unsafe URL rejected before transport: https://u:p@relay.invalid/v1
 PASS: unsafe URL rejected before transport: https://relay.invalid/v1?secret=x
 PASS: unsafe URL rejected before transport: https://relay.invalid/v1#fragment
 PASS: oversized notification preserves before transport
+PASS: SystemOne preserves raw probability and applies configured threshold
+PASS: SystemOne sends complete Chinese state and exact recent behavior
+PASS: SystemOne sends the required important-versus-ad choice schema
+PASS: SystemOne request has no Chat envelope or credential in JSON
+PASS: SystemOne uses POST JSON and Bearer only in the header
+PASS: SystemOne disables redirects and caches and closes finite-timeout transport
+PASS: SystemOne normalizes endpoint and keeps threshold equality: https://jev.invalid/
+PASS: SystemOne normalizes endpoint and keeps threshold equality: https://jev.invalid/v1/
+PASS: SystemOne normalizes endpoint and keeps threshold equality: https://jev.invalid/v1/systemone
+PASS: SystemOne anonymous route sends no Authorization
+PASS: SystemOne oversized complete behavior is preserved without transmission
+PASS: SystemOne invalid threshold preserves before transport
+PASS: SystemOne missing probabilities maps choice without claiming probability: 重要
+PASS: SystemOne missing probabilities maps choice without claiming probability: 广告
+PASS: SystemOne absent important key allows explicit choice fallback
+PASS: SystemOne rejects non-JSON without using invalid probability or leaking response
+PASS: SystemOne rejects null probability without using invalid probability or leaking response
+PASS: SystemOne rejects string probability without using invalid probability or leaking response
+PASS: SystemOne rejects out-of-range probability without using invalid probability or leaking response
+PASS: SystemOne rejects nonfinite probability without using invalid probability or leaking response
+PASS: SystemOne rejects null probabilities object without using invalid probability or leaking response
+PASS: SystemOne rejects unsupported choice without using invalid probability or leaking response
+PASS: SystemOne rejects duplicate probability without using invalid probability or leaking response
+PASS: SystemOne HTTP 401 preserves with bounded attempts and safe reason
+PASS: SystemOne HTTP 422 preserves with bounded attempts and safe reason
+PASS: SystemOne HTTP 429 preserves with bounded attempts and safe reason
+PASS: SystemOne HTTP 529 preserves with bounded attempts and safe reason
+PASS: SystemOne timeout preserves without retry or diagnostic leakage
+PASS: SystemOne redirect never forwards notification or credentials
 PASS: saving profiles advances revision and disables automatic removal
 PASS: profiles round-trip independently through Android Keystore
 PASS: synthetic credentials are absent from plaintext preference/files content
@@ -176,4 +108,4 @@ PASS: rule change invalidates old REMOVE
 PASS: rule revision change yields no cancellation
 PASS: teardown durably restores keywords, no remote consent, no credentials, observe mode
 
-MODEL RESULT: 77 checks passed, 0 failures
+MODEL RESULT: 108 checks passed, 0 failures

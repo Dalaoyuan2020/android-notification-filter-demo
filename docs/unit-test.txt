@@ -1,0 +1,3 @@
+PASS: 28 conservative notification-rule checks
+PASS: 102 Jev protocol, strict JSON, retry, and deadline checks
+PASS: 104 short-term attention-memory checks
