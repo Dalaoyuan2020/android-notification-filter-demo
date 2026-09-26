@@ -55,10 +55,12 @@ public final class AttentionActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(false);
         }
+        FrameLayout root = new FrameLayout(this);
+        root.setBackground(ui_theme.paper(this));
         ScrollView scroll = new ScrollView(this);
         scroll.setBackground(ui_theme.paper(this));
         scroll.setFillViewport(true);
-        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars()
                         | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
@@ -69,14 +71,13 @@ public final class AttentionActivity extends Activity {
             }
             return insets;
         });
-        FrameLayout frame = new FrameLayout(this);
+        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout frame = new cap_frame(this);
         scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout page = column();
         page.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
                 dp(ui_theme.PAGE_MARGIN), dp(32));
-        int available = getResources().getDisplayMetrics().widthPixels;
-        frame.addView(page, new FrameLayout.LayoutParams(available > dp(720) ? dp(720) : -1,
-                -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        frame.addView(page, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
         Button back = button("返回通知筛选");
         back.setOnClickListener(view -> finish());
         page.addView(back, fullWidth());
@@ -129,8 +130,8 @@ public final class AttentionActivity extends Activity {
         ranking.addView(lowList, fullWidth());
         space(page, 2);
         page.addView(text("同一个来源下的【淘宝】、【银行】等标题前缀分别统计。新前缀从 0.5 开始，不继承整个发送器的行为。条目不足 10 项时，高低榜可能重复。", 12, MUTED, false));
-        setContentView(scroll);
-        scroll.requestApplyInsets();
+        setContentView(root);
+        root.requestApplyInsets();
         populate(AttentionStore.loadConfig(this));
         refreshRankings();
     }

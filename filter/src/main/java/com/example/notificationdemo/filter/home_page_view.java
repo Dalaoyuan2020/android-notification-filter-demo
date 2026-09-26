@@ -56,11 +56,11 @@ public final class home_page_view extends LinearLayout {
         settingsArrow.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         serviceStrip.addView(settingsArrow);
         addView(serviceStrip, fullWidth());
-        space(12);
+        space(8);
 
         LinearLayout overview = new LinearLayout(context);
         overview.setOrientation(VERTICAL);
-        overview.setPadding(dp(14), dp(11), dp(14), dp(10));
+        overview.setPadding(dp(14), dp(9), dp(14), dp(8));
         overview.setBackground(ui_theme.shape(context, ui_theme.SHEET, 6, ui_theme.BORDER));
         overview.setElevation(dp(2));
         overview.setRotation(-0.7f);
@@ -68,8 +68,8 @@ public final class home_page_view extends LinearLayout {
         View rule = new View(context);
         rule.setBackgroundColor(ui_theme.GRID);
         LayoutParams ruleSize = new LayoutParams(-1, dp(1));
-        ruleSize.topMargin = dp(7);
-        ruleSize.bottomMargin = dp(7);
+        ruleSize.topMargin = dp(5);
+        ruleSize.bottomMargin = dp(5);
         overview.addView(rule, ruleSize);
         LinearLayout statistics = row();
         statistics.setBaselineAligned(false);
@@ -91,7 +91,7 @@ public final class home_page_view extends LinearLayout {
         paperSize.leftMargin = dp(3);
         paperSize.rightMargin = dp(3);
         addView(overview, paperSize);
-        space(6);
+        space(4);
 
         for (int row = 0; row < 2; row++) {
             LinearLayout pair = row();

@@ -1,5 +1,6 @@
 package com.example.notificationdemo.filter;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -35,6 +36,9 @@ public final class folder_view extends ViewGroup {
     private String filterKey = "";
     private OnFolderClickListener navigation;
     private float paperTop;
+    private ValueAnimator pressAnimator;
+    private float pressAmount;
+    private boolean feedbackPressed;
 
     public folder_view(Context context) { this(context, null); }
 
@@ -118,6 +122,14 @@ public final class folder_view extends ViewGroup {
     public long getCount() { return count; }
     public String getTitle() { return title; }
     public String getFilterKey() { return filterKey; }
+
+    @Override public void draw(Canvas canvas) {
+        int checkpoint = canvas.save();
+        float scale = 1f - 0.03f * pressAmount;
+        canvas.scale(scale, scale, getWidth() / 2f, getHeight() / 2f);
+        super.draw(canvas);
+        canvas.restoreToCount(checkpoint);
+    }
 
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int desiredWidth = dp(180) + getPaddingLeft() + getPaddingRight();
@@ -262,7 +274,56 @@ public final class folder_view extends ViewGroup {
 
     @Override protected void drawableStateChanged() {
         super.drawableStateChanged();
+        updatePressFeedback();
         invalidate();
+    }
+
+    private void updatePressFeedback() {
+        if (!isAttachedToWindow() || !isShown() || !ValueAnimator.areAnimatorsEnabled()) {
+            resetPressFeedback();
+            return;
+        }
+        boolean pressed = isPressed() && isEnabled() && isClickable();
+        if (pressed == feedbackPressed) return;
+        feedbackPressed = pressed;
+        if (pressAnimator != null) pressAnimator.cancel();
+        pressAnimator = ValueAnimator.ofFloat(pressAmount, pressed ? 1f : 0f);
+        pressAnimator.setDuration(pressed ? 90 : 130);
+        pressAnimator.addUpdateListener(value -> {
+            pressAmount = (float) value.getAnimatedValue();
+            invalidate();
+        });
+        pressAnimator.start();
+    }
+
+    private void resetPressFeedback() {
+        if (pressAnimator != null) {
+            pressAnimator.cancel();
+            pressAnimator = null;
+        }
+        feedbackPressed = false;
+        pressAmount = 0;
+        invalidate();
+    }
+
+    @Override protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        if (visibility != VISIBLE) resetPressFeedback();
+    }
+
+    @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        if (visibility != VISIBLE) resetPressFeedback();
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasWindowFocus) {
+        super.onWindowFocusChanged(hasWindowFocus);
+        if (!hasWindowFocus) resetPressFeedback();
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        resetPressFeedback();
+        super.onDetachedFromWindow();
     }
 
     @Override public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {

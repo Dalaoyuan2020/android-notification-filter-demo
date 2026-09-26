@@ -171,7 +171,7 @@ public final class messages_page_view extends LinearLayout {
                 continue;
             }
             LinearLayout box = column();
-            box.setPadding(dp(6), dp(8), dp(6), dp(8));
+            box.setPadding(dp(4), dp(8), dp(4), dp(8));
             box.setBackground(ui_theme.shape(getContext(), ui_theme.SHEET, 7, ui_theme.BORDER));
             LayoutParams size = new LayoutParams(0, -2, 1);
             if (i < count - 1) {
@@ -199,8 +199,8 @@ public final class messages_page_view extends LinearLayout {
             overviewLine(box, arrow + " p_final", 11, color, false);
             overviewLine(box, probability(fused), 12, color, true);
             space(box, 5);
-            overviewLine(box, model.optLong("latency_ms", 0) + "ms "
-                    + (success ? model.optString("action", "KEEP") : "失败"), 10,
+            overviewLine(box, model.optLong("latency_ms", 0) + " ms", 10, ui_theme.MUTED, false);
+            overviewLine(box, success ? model.optString("action", "KEEP") : "失败", 10,
                     success ? ui_theme.ACCENT : ui_theme.WARNING, true);
         }
         parent.addView(overview, fullWidth());

@@ -102,7 +102,7 @@ public final class onboarding_activity extends Activity {
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setFillViewport(true);
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        paper_frame frame = new paper_frame(this);
+        cap_frame frame = new cap_frame(this, 600);
         scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout content = new LinearLayout(this);
         pageContent = content;
@@ -397,20 +397,6 @@ public final class onboarding_activity extends Activity {
                 return true;
             }
             return super.dispatchTouchEvent(event);
-        }
-    }
-
-    private static final class paper_frame extends FrameLayout {
-        paper_frame(Context context) { super(context); }
-        @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            if (getChildCount() > 0) {
-                LayoutParams position = (LayoutParams) getChildAt(0).getLayoutParams();
-                int cap = ui_theme.dp(getContext(), 600);
-                int available = MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED ? cap
-                        : Math.max(0, MeasureSpec.getSize(widthMeasureSpec) - getPaddingLeft() - getPaddingRight());
-                position.width = Math.min(cap, available);
-            }
-            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
         }
     }
 

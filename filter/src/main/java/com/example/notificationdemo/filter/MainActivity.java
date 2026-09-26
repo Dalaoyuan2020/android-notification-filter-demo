@@ -346,7 +346,7 @@ public final class MainActivity extends Activity {
                 scroll.post(() -> scroll.scrollTo(0, scrollPositions[index]));
             }
         });
-        FrameLayout frame = new capped_page_frame(this);
+        FrameLayout frame = new cap_frame(this);
         scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout content = column();
         content.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
@@ -363,24 +363,6 @@ public final class MainActivity extends Activity {
             addSpace(content, 26);
         }
         return content;
-    }
-
-    /** Width is capped after the shell has consumed system/IME insets, including in landscape. */
-    private static final class capped_page_frame extends FrameLayout {
-        capped_page_frame(Context context) { super(context); }
-
-        @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            if (getChildCount() > 0) {
-                View content = getChildAt(0);
-                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) content.getLayoutParams();
-                int cap = ui_theme.dp(getContext(), 720);
-                int available = MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED ? cap
-                        : Math.max(0, MeasureSpec.getSize(widthMeasureSpec) - getPaddingLeft()
-                        - getPaddingRight() - params.leftMargin - params.rightMargin);
-                params.width = Math.min(cap, available);
-            }
-            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-        }
     }
 
     private void addPrivacyNote(LinearLayout content) {

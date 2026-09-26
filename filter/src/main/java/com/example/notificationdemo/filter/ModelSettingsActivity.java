@@ -144,11 +144,13 @@ public final class ModelSettingsActivity extends Activity {
             getWindow().setDecorFitsSystemWindows(false);
         }
 
+        FrameLayout root = new FrameLayout(this);
+        root.setBackground(ui_theme.paper(this));
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackground(ui_theme.paper(this));
         scroll.setVerticalScrollBarEnabled(false);
-        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets edge = insets.getInsets(WindowInsets.Type.systemBars()
                         | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
@@ -159,14 +161,13 @@ public final class ModelSettingsActivity extends Activity {
             }
             return insets;
         });
-        FrameLayout frame = new FrameLayout(this);
+        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout frame = new cap_frame(this);
         scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout page = column();
         page.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
                 dp(ui_theme.PAGE_MARGIN), dp(32));
-        int width = getResources().getDisplayMetrics().widthPixels;
-        frame.addView(page, new FrameLayout.LayoutParams(width > dp(720) ? dp(720) : -1,
-                -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        frame.addView(page, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
         Button back = button("返回通知筛选", false);
         back.setOnClickListener(view -> finish());
         page.addView(back, fullWidth());
@@ -182,8 +183,8 @@ public final class ModelSettingsActivity extends Activity {
         TextView note = text("保存任何模型配置都会关闭自动清除。未保存的编辑在离开页面或旋转屏幕后丢弃；密钥不会写入页面恢复状态。", 12, MUTED, false);
         note.setGravity(Gravity.START);
         page.addView(note);
-        setContentView(scroll);
-        scroll.requestApplyInsets();
+        setContentView(root);
+        root.requestApplyInsets();
 
         loading = true;
         modes.check(MODE_ID_BASE + modeIndex(selectedMode));
