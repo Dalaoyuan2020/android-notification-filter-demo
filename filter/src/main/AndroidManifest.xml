@@ -6,6 +6,7 @@
     <application android:label="通知筛选 Demo" android:icon="@drawable/ic_notification_filter" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:supportsRtl="true" android:usesCleartextTraffic="false">
         <activity android:name=".ModelSettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".AttentionActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".onboarding_activity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

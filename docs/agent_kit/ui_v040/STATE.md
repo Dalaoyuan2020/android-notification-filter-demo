@@ -13,3 +13,4 @@
 | 2026-09-26 | P6 完成 | 消息页四分类、真实来源/时间/结论气泡、完整详情；保留三路概率并排；修正滚动视口，避免概率被漂浮导航遮挡。编译/lint/279 纯 Java 与 82 项 HTTPS 模拟器检查通过，实屏确认淘宝 0.700 → 0.473 和首页四文件夹数量完整 | MainActivity、message_bubble_view、messages_page_view | 无真机结论；用户 MODEL_TESTING 改动保留。下一步 P7 |
 | 2026-09-26 | P7 完成 | 智能判断三张图钉便签、真实模式与远程状态、原模型/Attention 入口和自动清除守卫；补修跨地址自动清空不应清除平台共享 Key。编译/lint/279 纯 Java；模拟器入口与三项合成 Key 保存/跨源/主动清空核验通过 | MainActivity、judge_page_view、ModelSettingsActivity | 不曾调用真实服务，无真机结论。下一步 P8 |
 | 2026-09-27 | P8 完成 | 我的纸张目录六入口；权限/规则/自动清除收纳至可滚动详情；保留扫描、发送器、校验与保存；关闭重开及旋转恢复草稿。编译/lint/279 纯 Java；模拟器六入口、规则草稿、旋转、权限状态、扫描与发送器跳转通过 | MainActivity、judge_page_view、my_page_view | 使用引导目前为真实操作说明，P9 替换为动画式教程；无真机结论。下一步 P9a |
+| 2026-09-27 | P9a 完成 | 新建四幕原生动画教程、手势/概率示意与真实组件缩略图；首次 Launcher 判断、完成/跳过回首页、我的重播；独立本地完成标志。编译/lint/279 纯 Java；模拟器首次/二次启动、四幕、重播通过，动画开/关可显示，后两幕完整首屏 | onboarding_activity、onboarding_scene_view、MainActivity、Manifest | 固定示例仅教程，不写日志/记忆/网络；无真机结论。下一步 P9b |

@@ -73,6 +73,7 @@ public final class MainActivity extends Activity {
     private EditText blockWords;
     private boolean receiverRegistered;
     private boolean updatingSwitch;
+    private boolean openingFirstGuide;
     private final BroadcastReceiver changes = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             refreshState();
@@ -81,6 +82,13 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (onboarding_activity.shouldShow(this, getIntent())) {
+            openingFirstGuide = true;
+            startActivity(new Intent(this, onboarding_activity.class));
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+            finish();
+            return;
+        }
         appVersion = readAppVersion();
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(BACKGROUND);
@@ -133,6 +141,7 @@ public final class MainActivity extends Activity {
         refreshState();
         int restoredPage = savedInstanceState == null ? PAGE_HOME : savedInstanceState.getInt("selected_page", PAGE_HOME);
         switchPage(restoredPage, false);
+        handleGuideReturn(getIntent());
         if (savedInstanceState != null) {
             String detail = savedInstanceState.getString("opened_detail", "");
             int detailPosition = Math.max(0, savedInstanceState.getInt("detail_scroll", 0));
@@ -223,9 +232,9 @@ public final class MainActivity extends Activity {
                 panel = makeAdvancedPanel();
                 break;
             case my_page_view.GUIDE:
-                title = "使用引导";
-                panel = makeGuidePanel();
-                break;
+                startActivity(new Intent(this, onboarding_activity.class));
+                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+                return;
             case my_page_view.ABOUT:
                 title = "关于 Attention";
                 panel = makeAboutPanel();
@@ -296,30 +305,6 @@ public final class MainActivity extends Activity {
         addSpace(panel, 16);
         panel.addView(text("远程模型请求与独立事件上传分别控制；保存模型或注意力配置后，自动清除会关闭。", 12, MUTED, false));
         return panel;
-    }
-
-    private LinearLayout makeGuidePanel() {
-        LinearLayout panel = column();
-        guideStep(panel, "1  开启通知使用权", "在“通知权限”中进入系统设置授权，返回后确认监听服务已连接。");
-        guideStep(panel, "2  保存处理范围", "在“筛选规则”中填写目标 App 包名和关键词。保留词优先；关键词未命中时保留。微信默认不在处理范围。");
-        guideStep(panel, "3  用合成通知观察", "打开测试发送器，发送样本，再到“消息”查看保留或清除建议。默认观察模式不会移除通知。");
-        guideStep(panel, "4  再决定自动清除", "确认规则后，在“我的 → 自动清除”手动开启。对照模式只观察；清除的是通知卡片，不删除 App 内消息，也不能保证恢复。");
-        guideStep(panel, "5  按需使用模型", "在“智能判断”中配置服务并用合成样本测试。远程通知判断需手动开启；Attention 可查看本机短时记忆与单独的上传设置。");
-        Button permission = button("打开通知权限", false);
-        permission.setOnClickListener(view -> showProfileDetail(my_page_view.PERMISSIONS, 0));
-        panel.addView(permission, fullWidth());
-        addSpace(panel, 8);
-        Button sender = button("打开测试发送器", false);
-        sender.setOnClickListener(view -> openSender());
-        panel.addView(sender, fullWidth());
-        return panel;
-    }
-
-    private void guideStep(LinearLayout panel, String title, String body) {
-        panel.addView(text(title, 16, INK, true));
-        addSpace(panel, 7);
-        panel.addView(text(body, 13, MUTED, false));
-        addSpace(panel, 18);
     }
 
     private LinearLayout makeAboutPanel() {
@@ -625,6 +610,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onStart() {
         super.onStart();
+        if (openingFirstGuide) return;
         if (!receiverRegistered) {
             IntentFilter filter = new IntentFilter(DemoStore.ACTION_CHANGED);
             if (Build.VERSION.SDK_INT >= 33) registerReceiver(changes, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -648,6 +634,30 @@ public final class MainActivity extends Activity {
         refreshState();
     }
 
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (onboarding_activity.shouldShow(this, intent)) {
+            startActivity(new Intent(this, onboarding_activity.class));
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+            return;
+        }
+        handleGuideReturn(intent);
+    }
+
+    private void handleGuideReturn(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(onboarding_activity.EXTRA_RETURN_HOME, false)
+                || pageHost == null) return;
+        intent.removeExtra(onboarding_activity.EXTRA_RETURN_HOME);
+        if (detailsDialog != null) {
+            hideDetailKeyboard();
+            detailsDialog.dismiss();
+        }
+        switchPage(PAGE_HOME, false);
+        scrollPositions[PAGE_HOME] = 0;
+        pages[PAGE_HOME].post(() -> pages[PAGE_HOME].scrollTo(0, 0));
+    }
+
     @Override protected void onStop() {
         if (receiverRegistered) {
             unregisterReceiver(changes);
@@ -657,6 +667,10 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onSaveInstanceState(Bundle outState) {
+        if (openingFirstGuide) {
+            super.onSaveInstanceState(outState);
+            return;
+        }
         outState.putString("targets", targets.getText().toString());
         outState.putString("keepWords", keepWords.getText().toString());
         outState.putString("blockWords", blockWords.getText().toString());
