@@ -55,7 +55,7 @@ Attention
 不要擅自创造新的品牌名称。
 
 ## Napoleon 补充的事实（2026-09-26）
-- **代码基线**：仓库 main 分支是 v0.3.0，**没有 OnboardingActivity.java**（队友本地版本才有）。开工前先确认基线：队友本地有更新的，先推到分支 `ui-v040-base` 再开始；实在拿不到，P9 就按需求从零实现 OnboardingActivity
+- **代码基线**：仓库 main 分支是 v0.3.0，**没有 OnboardingActivity.java**（队友本地版本才有）。开工前先确认基线：队友本地有更新的可以先推到分支 `ui-v040-base`；**拿不到也不用等**，P9 按 MVP 范围（动画式手势教程，有界面即可）新做 OnboardingActivity
 - **路径**：原文里的 `D:\数模黑客松\...` 是队友电脑上的中文路径。本仓库一律用仓库相对路径；**新建的文件名、目录名只用英文小写 + 下划线**
 - 已有的非 UI 核心：`FilterService`、`DecisionEngine`、`ModelClient`、`SystemOneProtocol`、`ShortTermMemory`、`AttentionMath`、`AttentionTracker`、`AttentionStore`、`AttentionReporter`、`ModelStore`、`StrictJson`、`RetryPolicy`。**UI 重构只调用它们，不改算法**（P0 的配置修复例外）
 - 现有测试：`tests/`（纯 Java）、`filter/src/androidTest/`；每个阶段都要能通过 `.\gradlew.bat :filter:assembleDebug :filter:lintDebug` 和纯 Java 测试

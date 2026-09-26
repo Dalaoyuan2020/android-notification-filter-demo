@@ -20,7 +20,7 @@
 | P6 | `P6_page_messages.md` | 消息页 | P4 |
 | P7 | `P7_page_judge.md` | 智能判断页（接 ModelSettingsActivity、AttentionActivity） | P3 P4 |
 | P8 | `P8_page_me_migration.md` | 我的页 + 原首页功能迁移 | P4 |
-| P9a | `P9a_onboarding_design.md` | 首次启动引导：视觉与 4 幕 | P2 P3 |
+| P9a | `P9a_onboarding_design.md` | 首次启动引导：视觉与 4 幕（**MVP：动画式手势教程，有界面即可，细节后续打磨**） | P2 P3 |
 | P9b | `P9b_onboarding_interaction.md` | 首次启动引导：交互、动画、状态、验收 | P9a |
 | P10 | `P10_responsive_data_motion.md` | 安全区、真实数据刷新、动画 | P5–P8 |
 | P11 | `P11_acceptance_report.md` | 最终验收、发布 v0.4.0、回复格式 | 全部 |
