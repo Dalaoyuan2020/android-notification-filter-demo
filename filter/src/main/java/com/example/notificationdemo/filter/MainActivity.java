@@ -18,6 +18,7 @@ import android.text.InputType;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -48,6 +49,16 @@ public final class MainActivity extends Activity {
     private static final int AMBER = ui_theme.WARNING;
     private static final int SOFT_AMBER = ui_theme.SOFT_YELLOW;
     private static final int MAX_VISIBLE_LOGS = 80;
+    private static final int PAGE_HOME = 0;
+    private static final int PAGE_MESSAGES = 1;
+    private static final int PAGE_INTELLIGENCE = 2;
+    private static final int PAGE_PROFILE = 3;
+    private final ScrollView[] pages = new ScrollView[4];
+    private final int[] scrollPositions = new int[4];
+    private final boolean[] restoreScroll = new boolean[4];
+    private FrameLayout pageHost;
+    private bottom_navigation_view bottomNavigation;
+    private int selectedPage = -1;
 
     private TextView permissionValue;
     private TextView connectionValue;
@@ -81,9 +92,9 @@ public final class MainActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout root = new FrameLayout(this);
         root.setBackground(ui_theme.paper(this));
+        root.setFocusableInTouchMode(true);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets edge = insets.getInsets(
@@ -97,39 +108,18 @@ public final class MainActivity extends Activity {
             return insets;
         });
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setClipToPadding(false);
-        scroll.setVerticalScrollBarEnabled(false);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
-        FrameLayout contentFrame = new FrameLayout(this);
-        scroll.addView(contentFrame, new ScrollView.LayoutParams(-1, -2));
-        LinearLayout column = column();
-        column.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
-                dp(ui_theme.PAGE_MARGIN), dp(32));
-        int availableWidth = getResources().getDisplayMetrics().widthPixels;
-        FrameLayout.LayoutParams columnParams = new FrameLayout.LayoutParams(
-                availableWidth > dp(720) ? dp(720) : -1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        contentFrame.addView(column, columnParams);
-
-        TextView eyebrow = text("ANDROID  /  通知筛选验证", 11, TEAL, true);
-        eyebrow.setLetterSpacing(0.09f);
-        column.addView(eyebrow);
-        addSpace(column, 8);
-        column.addView(text("通知筛选", ui_theme.TITLE_SP, INK, true));
-        addSpace(column, 7);
-        column.addView(text("留下重要消息，让通知栏清爽一点。", 14, MUTED, false));
-        addSpace(column, 24);
-
-        makeStatusCard(column);
-        makeModeCard(column);
-        makeModelCard(column);
-        makeRulesCard(column);
-        makeLogsCard(column);
-        addSpace(column, 2);
-        TextView privacy = text("默认关键词在本机处理 · 模型远程处理需手动开启\n仅处理通知卡片，不删除原 App 内的消息。", 12, MUTED, false);
-        privacy.setGravity(Gravity.START);
-        column.addView(privacy);
+        pageHost = new FrameLayout(this);
+        pageHost.setFocusableInTouchMode(true);
+        pageHost.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
+        root.addView(pageHost, new FrameLayout.LayoutParams(-1, -1));
+        readPageState(savedInstanceState);
+        // All four pages are created exactly once before refreshing their shared state.
+        // Keeping their native views alive also keeps unsaved rule edits between tabs.
+        buildHomePage();
+        buildMessagesPage();
+        buildIntelligencePage();
+        buildProfilePage();
+        buildBottomNavigation(root);
 
         targets.setText(savedInstanceState == null ? DemoStore.getTargets(this)
                 : savedInstanceState.getString("targets", DemoStore.getTargets(this)));
@@ -139,7 +129,163 @@ public final class MainActivity extends Activity {
                 : savedInstanceState.getString("blockWords", DemoStore.getBlockWords(this)));
         setContentView(root);
         root.requestApplyInsets();
+        root.requestFocus();
         refreshState();
+        int restoredPage = savedInstanceState == null ? PAGE_HOME : savedInstanceState.getInt("selected_page", PAGE_HOME);
+        switchPage(restoredPage, false);
+    }
+
+    private void buildHomePage() {
+        LinearLayout content = buildPage(PAGE_HOME, "首页", "留下重要消息，让通知栏清爽一点。");
+        makeStatusCard(content);
+        addPrivacyNote(content);
+    }
+
+    private void buildMessagesPage() {
+        LinearLayout content = buildPage(PAGE_MESSAGES, "消息", "查看通知的真实判断与处理记录。");
+        makeLogsCard(content);
+    }
+
+    private void buildIntelligencePage() {
+        LinearLayout content = buildPage(PAGE_INTELLIGENCE, "智能判断", "管理判断策略、自动清除和短时注意力。");
+        makeModelCard(content);
+        makeModeCard(content);
+    }
+
+    private void buildProfilePage() {
+        LinearLayout content = buildPage(PAGE_PROFILE, "我的", "设置通知处理范围与关键词规则。");
+        makeRulesCard(content);
+        addPrivacyNote(content);
+    }
+
+    private LinearLayout buildPage(int index, String title, String description) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setSaveEnabled(false);
+        scroll.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
+        scroll.setPadding(0, 0, 0, dp(104));
+        scroll.setVisibility(View.GONE);
+        pages[index] = scroll;
+        pageHost.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        scroll.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (restoreScroll[index] && scroll.getVisibility() == View.VISIBLE && scroll.getHeight() > 0) {
+                restoreScroll[index] = false;
+                scroll.post(() -> scroll.scrollTo(0, scrollPositions[index]));
+            }
+        });
+        FrameLayout frame = new capped_page_frame(this);
+        scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
+        LinearLayout content = column();
+        content.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
+                dp(ui_theme.PAGE_MARGIN), dp(24));
+        frame.addView(content, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        TextView heading = text(title, ui_theme.TITLE_SP, INK, true);
+        if (Build.VERSION.SDK_INT >= 28) {
+            heading.setAccessibilityHeading(true);
+        }
+        content.addView(heading);
+        addSpace(content, 8);
+        content.addView(text(description, 14, MUTED, false));
+        addSpace(content, 26);
+        return content;
+    }
+
+    /** Width is capped after the shell has consumed system/IME insets, including in landscape. */
+    private static final class capped_page_frame extends FrameLayout {
+        capped_page_frame(Context context) { super(context); }
+
+        @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            if (getChildCount() > 0) {
+                View content = getChildAt(0);
+                FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) content.getLayoutParams();
+                int cap = ui_theme.dp(getContext(), 720);
+                int available = MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED ? cap
+                        : Math.max(0, MeasureSpec.getSize(widthMeasureSpec) - getPaddingLeft()
+                        - getPaddingRight() - params.leftMargin - params.rightMargin);
+                params.width = Math.min(cap, available);
+            }
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        }
+    }
+
+    private void addPrivacyNote(LinearLayout content) {
+        content.addView(text("默认关键词在本机处理 · 模型远程处理需手动开启\n仅处理通知卡片，不删除原 App 内的消息。",
+                12, MUTED, false));
+    }
+
+    private void buildBottomNavigation(FrameLayout root) {
+        bottomNavigation = new bottom_navigation_view(this);
+        bottomNavigation.setOnPageSelectedListener(page -> switchPage(page, true));
+        FrameLayout.LayoutParams position = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        position.leftMargin = dp(22);
+        position.rightMargin = dp(22);
+        position.bottomMargin = dp(14);
+        root.addView(bottomNavigation, position);
+        bottomNavigation.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            int reserved = bottomNavigation.getHeight() + dp(28);
+            for (ScrollView page : pages) {
+                if (page != null && page.getPaddingBottom() != reserved) {
+                    page.setPadding(0, 0, 0, reserved);
+                }
+            }
+        });
+    }
+
+    private void readPageState(Bundle state) {
+        int[] savedPositions = state == null ? null : state.getIntArray("page_scroll_positions");
+        for (int i = 0; i < pages.length; i++) {
+            scrollPositions[i] = savedPositions != null && i < savedPositions.length ? Math.max(0, savedPositions[i]) : 0;
+            restoreScroll[i] = true;
+        }
+    }
+
+    private void switchPage(int requested, boolean animate) {
+        int destination = requested >= 0 && requested < pages.length ? requested : PAGE_HOME;
+        if (destination == selectedPage) {
+            return;
+        }
+        if (animate) {
+            View focused = getCurrentFocus();
+            if (focused != null) {
+                focused.clearFocus();
+            }
+            pageHost.requestFocus();
+            // The editor can lose focus when its page becomes GONE. Close its IME
+            // first, using the attached shell's token rather than an optional editor.
+            InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (keyboard != null) {
+                keyboard.hideSoftInputFromWindow(pageHost.getWindowToken(), 0);
+            }
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowInsetsController controller = pageHost.getWindowInsetsController();
+                if (controller != null) {
+                    controller.hide(WindowInsets.Type.ime());
+                }
+            }
+        }
+        if (selectedPage >= 0) {
+            ScrollView previous = pages[selectedPage];
+            scrollPositions[selectedPage] = previous.getScrollY();
+            previous.animate().cancel();
+            previous.setAlpha(1f);
+            previous.setTranslationY(0f);
+            previous.setVisibility(View.GONE);
+        }
+        selectedPage = destination;
+        bottomNavigation.setSelectedPage(destination);
+        ScrollView next = pages[destination];
+        next.animate().cancel();
+        next.setVisibility(View.VISIBLE);
+        if (animate) {
+            next.setAlpha(0f);
+            next.setTranslationY(dp(6));
+            next.animate().alpha(1f).translationY(0f).setDuration(150).start();
+        } else {
+            next.setAlpha(1f);
+            next.setTranslationY(0f);
+        }
     }
 
     private void makeStatusCard(LinearLayout parent) {
@@ -163,7 +309,7 @@ public final class MainActivity extends Activity {
         Button refresh = button("重新扫描现有通知", false);
         refresh.setOnClickListener(view -> {
             if (FilterService.scanExisting()) {
-                toast("已请求扫描，结果将出现在下方记录中");
+                toast("已请求扫描，结果将出现在“消息”的验证记录中");
             } else {
                 toast("监听尚未连接，请先授权；必要时在设置中关闭后重新开启");
             }
@@ -319,9 +465,9 @@ public final class MainActivity extends Activity {
         autoSwitch.setEnabled(allowsAutomatic(modelConfig));
         updatingSwitch = false;
         String route = modelConfig.mode == ModelConfig.Mode.KEYWORDS ? "关键词 · 本机规则"
-                : modelConfig.mode == ModelConfig.Mode.OFFICIAL ? "官方模型 · " + profileLabel(modelConfig.official)
-                : modelConfig.mode == ModelConfig.Mode.BOCHA ? "Bocha 模型 · " + profileLabel(modelConfig.bocha)
-                : modelConfig.mode == ModelConfig.Mode.RELAY ? "中转模型 · " + profileLabel(modelConfig.relay)
+                : modelConfig.mode == ModelConfig.Mode.OFFICIAL ? "路线 1 · " + profileLabel(modelConfig.official)
+                : modelConfig.mode == ModelConfig.Mode.BOCHA ? "路线 2 · " + profileLabel(modelConfig.bocha)
+                : modelConfig.mode == ModelConfig.Mode.RELAY ? "路线 3 · " + profileLabel(modelConfig.relay)
                 : "多路对照 · 只观察，不清除";
         String remote = modelConfig.mode == ModelConfig.Mode.KEYWORDS
                 ? "当前在本机处理通知，不调用远程模型。"
@@ -584,6 +730,14 @@ public final class MainActivity extends Activity {
         outState.putString("targets", targets.getText().toString());
         outState.putString("keepWords", keepWords.getText().toString());
         outState.putString("blockWords", blockWords.getText().toString());
+        outState.putInt("selected_page", selectedPage < 0 ? PAGE_HOME : selectedPage);
+        int[] currentScroll = scrollPositions.clone();
+        for (int i = 0; i < pages.length; i++) {
+            if (pages[i] != null && !restoreScroll[i]) {
+                currentScroll[i] = pages[i].getScrollY();
+            }
+        }
+        outState.putIntArray("page_scroll_positions", currentScroll);
         super.onSaveInstanceState(outState);
     }
 
