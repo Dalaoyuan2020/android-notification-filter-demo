@@ -125,11 +125,11 @@ public final class SystemOneProtocolTest {
     }
 
     private static void profileCompatibility() {
-        check("legacy four-field profiles retain Chat protocol", new ModelConfig.Profile("old", "https://example.test/v1", "m", "").protocol == ModelConfig.Protocol.CHAT_COMPLETIONS);
+        check("four-field profiles default to Jev", new ModelConfig.Profile("new", "https://example.test/v1", "m", "").protocol == ModelConfig.Protocol.JEV_SYSTEMONE);
         check("new TypeSafe preset explicitly Jev", ModelConfig.presetTypeSafe().protocol == ModelConfig.Protocol.JEV_SYSTEMONE
                 && "https://api.typesafe.ai".equals(ModelConfig.presetTypeSafe().baseUrl) && "jev-latest".equals(ModelConfig.presetTypeSafe().model));
         check("new Bocha preset explicitly Jev", ModelConfig.presetBocha().protocol == ModelConfig.Protocol.JEV_SYSTEMONE
-                && "https://jev.bocha.cn".equals(ModelConfig.presetBocha().baseUrl) && "bocha-jev-v1".equals(ModelConfig.presetBocha().model));
+                && "https://tokendance.space/gateway/typesafe".equals(ModelConfig.presetBocha().baseUrl) && "bocha-jev-v1".equals(ModelConfig.presetBocha().model));
         check("self-hosted preset never invents endpoint/model", ModelConfig.emptyRelay().protocol == ModelConfig.Protocol.JEV_SYSTEMONE
                 && ModelConfig.emptyRelay().baseUrl.isEmpty() && ModelConfig.emptyRelay().model.isEmpty());
         check("legacy strategy ordinals stable", ModelConfig.Mode.COMPARE.ordinal() == 3 && ModelConfig.Mode.BOCHA.ordinal() == 4);

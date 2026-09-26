@@ -19,6 +19,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
+TEAM_MODELS = {"local-systemone-ft", "local-systemone-v1", "typesafe-jev", "bocha-jev"}
+
 
 def certificates(directory):
     now = dt.datetime.now(dt.timezone.utc)
@@ -92,12 +94,14 @@ def main():
                 if length <= 0 or length > 65536:
                     raise ValueError("invalid request length")
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
-                if self.path not in ("/official/v1/systemone", "/relay/v1/systemone", "/bocha/v1/systemone"):
+                if self.path not in ("/official/v1/systemone", "/relay/v1/systemone", "/bocha/v1/systemone", "/jev/v1/systemone"):
                     raise ValueError("unexpected route")
                 state = body["state"]
                 question = body["questions"]["keep"]
                 if not isinstance(body["model"], str) or not body["model"]:
                     raise ValueError("missing model")
+                if self.path == "/jev/v1/systemone" and body["model"] not in TEAM_MODELS:
+                    raise ValueError("unexpected 1052 model")
                 if not all(isinstance(state[key], str) for key in ("来源", "标题", "消息")):
                     raise ValueError("invalid state")
                 if "近期行为" in state and not isinstance(state["近期行为"], str):

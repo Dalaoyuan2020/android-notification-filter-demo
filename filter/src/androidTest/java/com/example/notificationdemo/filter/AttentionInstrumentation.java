@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
@@ -15,6 +16,11 @@ import android.service.notification.NotificationListenerService;
 import android.util.Base64;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.RadioGroup;
+import android.widget.Spinner;
+import android.widget.Switch;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -27,6 +33,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Field;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
@@ -92,8 +99,11 @@ public class AttentionInstrumentation extends Instrumentation {
             runCase("fresh attention defaults keep event/body upload off", this::freshDefaults);
             resetSettings();
             runCase("actual TLS certificate verification", this::tlsVerification);
+            runCase("settings dropdown saves and sends all four 1052 models over HTTPS", this::teamModelsOverTls);
+            runCase("1052 model choices share one encrypted credential", this::teamCredentialStorage);
+            runCase("editable endpoint changes isolate credentials by origin", this::urlCredentialIsolation);
             runCase("attention token storage is encrypted and round-trips", this::attentionTokenStorage);
-            runCase("existing Chat profile keeps legacy protocol on migration", this::legacyMigration);
+            runCase("legacy Chat migrates to Jev and requires configuration review", this::legacyMigration);
             runCase("three and two route comparison retains notifications", this::compareRoutes);
             runCase("five real SystemUI dismissals then isolated prefix predictions", this::realDismissalsAndProbes);
             runCase("accelerated 30-minute ignore sweep records once", this::ignoreOnce);
@@ -126,6 +136,7 @@ public class AttentionInstrumentation extends Instrumentation {
         ModelClient.Result trusted = ModelClient.classify(official, input, "合成应用", "", 0.5, this::trustedConnection);
         check("fixture-only TrustManager accepts actual HTTPS response", trusted.success && trusted.hasProbability && close(trusted.probability, 0.7));
         check("actual Jev probability maps to KEEP at threshold 0.5", trusted.action == DecisionEngine.Action.KEEP);
+        check("actual HTTPS success exposes status 200", trusted.httpStatus == 200 && untrusted.httpStatus == 0);
     }
 
     private void freshDefaults() {
@@ -133,6 +144,165 @@ public class AttentionInstrumentation extends Instrumentation {
         check("fresh install defaults to upload=false and uploadBody=false", !config.uploadEnabled && !config.uploadBody);
         check("fresh attention defaults are half-life 30 minutes and weight 1", config.halfLifeMinutes == 30 && config.weight == 1);
         check("fresh install has no attention service token", config.serviceToken.isEmpty());
+        ModelConfig models = ModelStore.load(target);
+        check("fresh model slots select 1052 ft, v1 and typesafe", "local-systemone-ft".equals(models.official.model)
+                && "local-systemone-v1".equals(models.bocha.model) && "typesafe-jev".equals(models.relay.model));
+        check("fresh three slots all use Jev and recommended 1052 base", ModelConfig.isTeam1052(models.official)
+                && ModelConfig.isTeam1052(models.bocha) && ModelConfig.isTeam1052(models.relay)
+                && models.official.protocol == ModelConfig.Protocol.JEV_SYSTEMONE
+                && models.bocha.protocol == ModelConfig.Protocol.JEV_SYSTEMONE
+                && models.relay.protocol == ModelConfig.Protocol.JEV_SYSTEMONE);
+        check("fresh defaults select three comparison routes without enabling remote", models.compareOfficial
+                && models.compareBocha && models.compareRelay && !models.remoteEnabled && !models.needsReview);
+    }
+
+    private void teamModelsOverTls() throws Exception {
+        String[] expected = ModelConfig.team1052Models();
+        for (int index = 0; index < expected.length; index++) {
+            cleanCase();
+            ModelStore.save(target, ModelConfig.Mode.KEYWORDS, false, ModelConfig.defaultOfficial(),
+                    ModelConfig.defaultRelay(), ModelConfig.defaultBocha(), 0.5, true, true, true);
+            Activity screen = startActivitySync(new Intent(target, ModelSettingsActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            try {
+                waitForIdleSync();
+                Spinner dropdown = field(screen, "teamModelField", Spinner.class);
+                EditText modelField = field(screen, "modelField", EditText.class);
+                EditText urlField = field(screen, "urlField", EditText.class);
+                Button saveButton = field(screen, "saveButton", Button.class);
+                RadioGroup modes = field(screen, "modes", RadioGroup.class);
+                Switch remote = field(screen, "remoteSwitch", Switch.class);
+                final int selected = index;
+                runOnMainSync(() -> dropdown.setSelection(selected));
+                waitForIdleSync();
+                String[] displayedModel = new String[1];
+                runOnMainSync(() -> displayedModel[0] = modelField.getText().toString());
+                check(expected[index] + " dropdown writes its exact model ID", expected[index].equals(displayedModel[0]));
+                long before = ModelStore.getRevision(target);
+                runOnMainSync(() -> {
+                    // Test-only substitution of the locked preset URL; no credential or external request.
+                    urlField.setText(origin + "/jev");
+                    modes.check(4101); // Existing route 1 strategy RadioButton.
+                    remote.setChecked(true);
+                    saveButton.performClick();
+                });
+                ModelConfig saved = ModelStore.load(target);
+                check(expected[index] + " UI save persists selected Jev model and localhost endpoint",
+                        saved.revision > before && saved.mode == ModelConfig.Mode.OFFICIAL && saved.remoteEnabled
+                                && saved.official.protocol == ModelConfig.Protocol.JEV_SYSTEMONE
+                                && expected[index].equals(saved.official.model) && saved.official.baseUrl.equals(origin + "/jev")
+                                && saved.official.apiKey.isEmpty());
+            } finally {
+                runOnMainSync(screen::finish);
+                waitForIdleSync();
+            }
+            scenario("normal");
+            await(expected[index] + " saved profile returns an actual native HTTPS probability",
+                    () -> models(101).length() == 1 && allProbabilities(models(101), 0.7, 0.7));
+            check(expected[index] + " saved UI choice is used by notification processing", allProbabilities(models(101), 0.7, 0.7));
+        }
+        evidence("1052 UI dropdown -> hidden model field -> save -> notification -> localhost /jev/v1/systemone. Host independently verifies all four received body.model values. No credentials screen screenshot is taken.");
+        cleanCase();
+    }
+
+    private static <T> T field(Activity screen, String name, Class<T> type) throws Exception {
+        Field field = ModelSettingsActivity.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return type.cast(field.get(screen));
+    }
+
+    private void teamCredentialStorage() throws Exception {
+        String syntheticKey = "synthetic-1052-shared-test-key-p0-8e4c";
+        ModelConfig.Profile primary = ModelConfig.defaultOfficial();
+        ModelConfig.Profile keyed = new ModelConfig.Profile(primary.label, primary.baseUrl, primary.model, syntheticKey, primary.protocol);
+        ModelStore.save(target, ModelConfig.Mode.KEYWORDS, false, keyed, ModelConfig.defaultRelay(),
+                ModelConfig.defaultBocha(), 0.5, true, true, true);
+        ModelConfig loaded = ModelStore.load(target);
+        check("one supplied 1052 key is shared across the three routes", syntheticKey.equals(loaded.official.apiKey)
+                && syntheticKey.equals(loaded.relay.apiKey) && syntheticKey.equals(loaded.bocha.apiKey) && loaded.storageError.isEmpty());
+        SharedPreferences preferences = target.getSharedPreferences(ModelStore.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        check("1052 shared key is encrypted in exactly its shared credential slot",
+                preferences.getString("team1052_key_cipher", "").startsWith("v1:")
+                        && !preferences.contains("official_key_cipher") && !preferences.contains("relay_key_cipher")
+                        && !preferences.contains("bocha_key_cipher") && !preferences.getAll().toString().contains(syntheticKey));
+        ModelConfig.Profile fourth = ModelConfig.presetTeam1052("bocha-jev");
+        ModelStore.save(target, ModelConfig.Mode.KEYWORDS, false,
+                new ModelConfig.Profile(fourth.label, fourth.baseUrl, fourth.model, loaded.official.apiKey, fourth.protocol),
+                loaded.relay, loaded.bocha, 0.5, true, true, true);
+        ModelConfig switched = ModelStore.load(target);
+        check("switching to fourth model retains the same encrypted 1052 key",
+                "bocha-jev".equals(switched.official.model) && syntheticKey.equals(switched.official.apiKey)
+                        && syntheticKey.equals(switched.relay.apiKey) && syntheticKey.equals(switched.bocha.apiKey));
+        boolean rejected = false;
+        try {
+            ModelStore.save(target, ModelConfig.Mode.KEYWORDS, false, keyed,
+                    new ModelConfig.Profile("conflicting synthetic", primary.baseUrl, "typesafe-jev", "synthetic-other-key"),
+                    ModelConfig.defaultBocha(), 0.5, true, true, true);
+        } catch (IOException expected) { rejected = true; }
+        check("conflicting 1052 credentials are rejected without changing the saved key",
+                rejected && syntheticKey.equals(ModelStore.load(target).official.apiKey));
+        check("credential-only test never enables remote processing", !ModelStore.load(target).remoteEnabled);
+        resetSettings();
+    }
+
+    private void urlCredentialIsolation() throws Exception {
+        for (boolean legacyTeam : new boolean[]{false, true}) {
+            String label = legacyTeam ? "legacy 1052 custom" : "direct TypeSafe";
+            String base = legacyTeam ? "https://10521052.xyz/legacy-custom" : "https://api.typesafe.ai";
+            String oldKey = "synthetic-origin-old-" + (legacyTeam ? "team" : "direct");
+            String newKey = "synthetic-origin-replacement-" + (legacyTeam ? "team" : "direct");
+            ModelConfig.Profile existing = new ModelConfig.Profile(label, base, "synthetic-origin-model", oldKey);
+            ModelStore.save(target, ModelConfig.Mode.KEYWORDS, false, existing, relay, bocha, 0.5, true, true, true);
+            if (legacyTeam) {
+                boolean committed = target.getSharedPreferences(ModelStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
+                        .edit().putString("official_protocol", ModelConfig.Protocol.CHAT_COMPLETIONS.name()).commit();
+                if (!committed) throw new AssertionError("Unable to write synthetic legacy marker");
+            }
+            Activity screen = startActivitySync(new Intent(target, ModelSettingsActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            try {
+                waitForIdleSync();
+                EditText url = field(screen, "urlField", EditText.class);
+                EditText key = field(screen, "keyField", EditText.class);
+                Button save = field(screen, "saveButton", Button.class);
+                check(label + " has an editable address and its original saved credential",
+                        url.isEnabled() && oldKey.equals(editValue(key)));
+
+                String sameOrigin = base + "/changed-path";
+                runOnMainSync(() -> url.setText(sameOrigin));
+                check(label + " same-origin path edit retains credential in the field", oldKey.equals(editValue(key)));
+                runOnMainSync(save::performClick);
+                ModelConfig same = ModelStore.load(target);
+                check(label + " same-origin path saves with original credential", same.official.baseUrl.equals(sameOrigin)
+                        && oldKey.equals(same.official.apiKey) && !same.remoteEnabled);
+
+                String otherOrigin = origin + "/synthetic-new-origin";
+                runOnMainSync(() -> url.setText(otherOrigin));
+                check(label + " changing host immediately clears the old credential", editValue(key).isEmpty());
+                runOnMainSync(save::performClick);
+                ModelConfig cleared = ModelStore.load(target);
+                check(label + " new host cannot save the previous host credential",
+                        cleared.official.baseUrl.equals(otherOrigin) && cleared.official.apiKey.isEmpty() && !cleared.remoteEnabled);
+
+                runOnMainSync(() -> {
+                    key.setText(newKey);
+                    save.performClick();
+                });
+                ModelConfig replaced = ModelStore.load(target);
+                check(label + " accepts a newly entered credential for the new origin",
+                        replaced.official.baseUrl.equals(otherOrigin) && newKey.equals(replaced.official.apiKey)
+                                && replaced.storageError.isEmpty() && !replaced.remoteEnabled);
+            } finally {
+                runOnMainSync(screen::finish);
+                waitForIdleSync();
+                resetSettings();
+            }
+        }
+        evidence("Origin-isolation UI checks use synthetic credentials and remote=false throughout; no connection button or external provider is called.");
+    }
+
+    private String editValue(EditText field) {
+        String[] value = new String[1];
+        runOnMainSync(() -> value[0] = field.getText().toString());
+        return value[0];
     }
 
     private void attentionTokenStorage() throws Exception {
@@ -149,15 +319,37 @@ public class AttentionInstrumentation extends Instrumentation {
 
     private void legacyMigration() throws Exception {
         SharedPreferences preferences = target.getSharedPreferences(ModelStore.PREFERENCES_NAME, Context.MODE_PRIVATE);
-        boolean committed = preferences.edit().putString("official_label", "Legacy Chat synthetic")
-                .putString("official_url", origin + "/legacy-chat").putString("official_model", "legacy-synthetic")
-                .putString("official_key_cipher", "").remove("official_protocol").commit();
-        ModelConfig migrated = ModelStore.load(target);
-        check("old saved profile without protocol remains Chat Completions", committed
-                && migrated.official.protocol == ModelConfig.Protocol.CHAT_COMPLETIONS);
-        check("legacy endpoint/model are preserved during migration", migrated.official.baseUrl.equals(origin + "/legacy-chat")
-                && migrated.official.model.equals("legacy-synthetic"));
-        check("migration does not enable remote transmission", !migrated.remoteEnabled);
+        String syntheticKey = "synthetic-legacy-migration-p0-key";
+        for (boolean missingProtocol : new boolean[]{false, true}) {
+            String variant = missingProtocol ? "missing legacy protocol" : "explicit legacy Chat";
+            ModelConfig.Profile legacy = new ModelConfig.Profile("Legacy Chat synthetic", origin + "/legacy-chat",
+                    "legacy-synthetic", syntheticKey, ModelConfig.Protocol.JEV_SYSTEMONE);
+            ModelStore.save(target, ModelConfig.Mode.OFFICIAL, false, legacy, relay, bocha, 0.5, true, true, true);
+            SharedPreferences.Editor edit = preferences.edit().putBoolean("remote_enabled", true);
+            if (missingProtocol) edit.remove("official_protocol");
+            else edit.putString("official_protocol", ModelConfig.Protocol.CHAT_COMPLETIONS.name());
+            boolean committed = edit.commit();
+            ModelConfig migrated = ModelStore.load(target);
+            check(variant + " migrates to Jev", committed && migrated.official.protocol == ModelConfig.Protocol.JEV_SYSTEMONE);
+            check(variant + " preserves endpoint, model, label and encrypted key", migrated.official.baseUrl.equals(legacy.baseUrl)
+                    && migrated.official.model.equals(legacy.model) && migrated.official.label.equals(legacy.label)
+                    && syntheticKey.equals(migrated.official.apiKey) && migrated.storageError.isEmpty());
+            check(variant + " disables previously enabled remote transmission pending review",
+                    !migrated.remoteEnabled && migrated.needsReview && !migrated.migrationNotice.isEmpty());
+            ModelConfig reread = ModelStore.load(target);
+            check(variant + " notice survives reload until explicit save", reread.needsReview
+                    && !reread.remoteEnabled && reread.migrationNotice.equals(migrated.migrationNotice));
+            check(variant + " does not silently overwrite the stored legacy marker",
+                    missingProtocol ? !preferences.contains("official_protocol")
+                            : ModelConfig.Protocol.CHAT_COMPLETIONS.name().equals(preferences.getString("official_protocol", "")));
+            ModelStore.save(target, migrated.mode, false, migrated.official, migrated.relay, migrated.bocha,
+                    migrated.threshold, migrated.compareOfficial, migrated.compareRelay, migrated.compareBocha);
+            ModelConfig reviewed = ModelStore.load(target);
+            check(variant + " explicit save completes review without enabling remote", !reviewed.needsReview
+                    && reviewed.migrationNotice.isEmpty() && !reviewed.remoteEnabled
+                    && reviewed.official.protocol == ModelConfig.Protocol.JEV_SYSTEMONE
+                    && syntheticKey.equals(reviewed.official.apiKey));
+        }
         resetSettings();
     }
 
@@ -328,11 +520,16 @@ public class AttentionInstrumentation extends Instrumentation {
                                       String[] requiredLabels) throws Exception {
         shell("am start -W -n com.example.notificationdemo.filter/.MainActivity");
         boolean visible = false;
+        Set<String> openedSections = new HashSet<>();
         for (int attempt = 0; attempt < 16; attempt++) {
             AccessibilityNodeInfo root = filterRoot();
             if (root == null) { SystemClock.sleep(200); continue; }
             if (hasVisibleProbabilities(root, minimumProbabilityViews, requireDownward, requiredLabels)) { visible = true; break; }
             AccessibilityNodeInfo candidate = findProbabilityPanel(root, requireDownward);
+            if (candidate == null && openExistingProbabilitySection(root, openedSections)) {
+                SystemClock.sleep(300);
+                continue;
+            }
             boolean shown = candidate != null && candidate.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
             if (!shown) scroll(root);
             SystemClock.sleep(300);
@@ -349,6 +546,25 @@ public class AttentionInstrumentation extends Instrumentation {
             if (!screenshot.compress(Bitmap.CompressFormat.PNG, 100, output)) throw new AssertionError("Screenshot encoding failed");
         } finally { screenshot.recycle(); }
         check(filename + ": actual visible probability UI screenshot saved", proof.isFile() && proof.length() > 0);
+    }
+
+    /** Follow an actual visible navigation entry if the host screen exposes one. */
+    private boolean openExistingProbabilitySection(AccessibilityNodeInfo root, Set<String> opened) {
+        for (String label : new String[]{"验证记录", "消息"}) {
+            if (opened.contains(label)) continue;
+            AccessibilityNodeInfo entry = findTitle(root, label);
+            if (entry == null || !entry.isVisibleToUser()) continue;
+            Rect screen = new Rect(), bounds = new Rect();
+            root.getBoundsInScreen(screen); entry.getBoundsInScreen(bounds);
+            if (bounds.isEmpty() || !screen.contains(bounds)) continue;
+            for (int depth = 0; entry != null && depth < 3; depth++, entry = entry.getParent()) {
+                if (entry.isClickable() && entry.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    opened.add(label);
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private AccessibilityNodeInfo filterRoot() {

@@ -52,9 +52,13 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     private static final long TIMEOUT_MS = 15000;
     private static final Pattern RECORD = Pattern.compile("^\\s+NotificationRecord\\([^\\r\\n]*?\\bpkg=([^\\s]+)[^\\r\\n]*?\\bid=(-?\\d+)\\b.*$");
     private static final ModelConfig.Profile OFFICIAL = new ModelConfig.Profile(
-            "official-test", "https://official.invalid/v1", "official-model", "synthetic-official-key-4f09");
+            "official-test", "https://official.invalid/v1", "official-model", "synthetic-official-key-4f09", ModelConfig.Protocol.CHAT_COMPLETIONS);
     private static final ModelConfig.Profile RELAY = new ModelConfig.Profile(
-            "relay-test", "https://relay.invalid/api/v1/", "relay-model", "synthetic-relay-key-b922");
+            "relay-test", "https://relay.invalid/api/v1/", "relay-model", "synthetic-relay-key-b922", ModelConfig.Protocol.CHAT_COMPLETIONS);
+    private static final ModelConfig.Profile SERVICE_OFFICIAL = ModelConfig.migrateToJev(OFFICIAL);
+    private static final ModelConfig.Profile SERVICE_RELAY = ModelConfig.migrateToJev(RELAY);
+    private static final ModelConfig.Profile SERVICE_BOCHA = new ModelConfig.Profile(
+            "unused-third-test-route", "https://bocha.invalid", "synthetic-third", "", ModelConfig.Protocol.JEV_SYSTEMONE);
     private static final ModelConfig.Profile SYSTEM_ONE = new ModelConfig.Profile(
             "jev-test", "https://jev.invalid", "synthetic-jev-model", "synthetic-jev-key-a723",
             ModelConfig.Protocol.JEV_SYSTEMONE);
@@ -153,7 +157,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
         check("credentials are absent from JSON request bodies", !official.requestText().contains(OFFICIAL.apiKey) && !relay.requestText().contains(RELAY.apiKey));
         check("transport disables redirect following and sets finite timeouts", !official.getInstanceFollowRedirects()
                 && official.getConnectTimeout() > 0 && official.getReadTimeout() > 0 && official.disconnected);
-        ModelConfig.Profile noKey = new ModelConfig.Profile("anonymous", "https://relay.invalid/v1/chat/completions", "model", "");
+        ModelConfig.Profile noKey = new ModelConfig.Profile("anonymous", "https://relay.invalid/v1/chat/completions", "model", "", ModelConfig.Protocol.CHAT_COMPLETIONS);
         FakeConnection anonymous = fake(envelope("{\"action\":\"KEEP\",\"reason\":\"No key\"}"));
         ModelClient.Result result = ModelClient.classify(noKey, INPUT, url -> anonymous.at(url));
         check("complete endpoint is not duplicated and empty key sends no Authorization", result.success
@@ -220,7 +224,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
         assertFailOpen("oversized response preserves", repeat('x', 32769));
         for (String base : new String[]{"http://relay.invalid/v1", "https://u:p@relay.invalid/v1", "https://relay.invalid/v1?secret=x", "https://relay.invalid/v1#fragment"}) {
             AtomicInteger opens = new AtomicInteger();
-            ModelClient.Result invalid = ModelClient.classify(new ModelConfig.Profile("bad", base, "model", "key"), INPUT, url -> { opens.incrementAndGet(); return fake("").at(url); });
+            ModelClient.Result invalid = ModelClient.classify(new ModelConfig.Profile("bad", base, "model", "key", ModelConfig.Protocol.CHAT_COMPLETIONS), INPUT, url -> { opens.incrementAndGet(); return fake("").at(url); });
             check("unsafe URL rejected before transport: " + base, !invalid.success && invalid.action == DecisionEngine.Action.KEEP && opens.get() == 0);
         }
         AtomicInteger opens = new AtomicInteger();
@@ -332,7 +336,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     }
 
     private void systemOneTransport() throws Exception {
-        for (int status : new int[]{401, 422, 429, 529}) {
+        for (int status : new int[]{401, 404, 422, 429, 529}) {
             AtomicInteger opens = new AtomicInteger();
             FakeConnection[] attempts = new FakeConnection[3];
             ModelClient.Result result = ModelClient.classify(SYSTEM_ONE, INPUT, "合成发送器", "", 0.5, url -> {
@@ -348,8 +352,9 @@ public class ModelInstrumentation extends AttentionInstrumentation {
             }
             check("SystemOne HTTP " + status + " preserves with bounded attempts and safe reason", !result.success
                     && result.action == DecisionEngine.Action.KEEP && ("HTTP_" + status).equals(result.error)
-                    && opens.get() == expectedAttempts && closed && !result.reason.contains(SYSTEM_ONE.apiKey)
+                    && result.httpStatus == status && opens.get() == expectedAttempts && closed && !result.reason.contains(SYSTEM_ONE.apiKey)
                     && (status != 401 || result.reason.contains("API Key无效"))
+                    && (status != 404 || result.reason.contains("地址不对") && result.reason.contains("/jev"))
                     && (status != 422 || result.reason.contains("请求格式")));
         }
         FakeConnection timeout = fake(systemOneProbability(0));
@@ -359,7 +364,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
                 url -> { opens.incrementAndGet(); return timeout.at(url); });
         check("SystemOne timeout preserves without retry or diagnostic leakage", !timedOut.success
                 && timedOut.action == DecisionEngine.Action.KEEP && "TIMEOUT".equals(timedOut.error)
-                && opens.get() == 1 && timeout.disconnected && !timedOut.reason.contains(SYSTEM_ONE.apiKey));
+                && timedOut.httpStatus == 0 && opens.get() == 1 && timeout.disconnected && !timedOut.reason.contains(SYSTEM_ONE.apiKey));
         FakeConnection redirect = fake(systemOneProbability(0));
         redirect.status = 307;
         opens.set(0);
@@ -373,7 +378,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     private void profileStorage() throws Exception {
         DemoStore.setAuto(target, true);
         long previousRevision = ModelStore.getRevision(target);
-        ModelConfig saved = ModelStore.save(target, ModelConfig.Mode.COMPARE, true, OFFICIAL, RELAY);
+        ModelConfig saved = saveTwoRoutes(ModelConfig.Mode.COMPARE, true, SERVICE_OFFICIAL, SERVICE_RELAY);
         ModelConfig loaded = ModelStore.load(target);
         check("saving profiles advances revision and disables automatic removal", saved.revision > previousRevision
                 && loaded.revision == saved.revision && !DemoStore.getAuto(target));
@@ -389,7 +394,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
         ModelConfig swapped = ModelStore.load(target);
         check("swapped encrypted credentials fail authentication and disable transmission", !swapped.remoteEnabled
                 && !swapped.storageError.isEmpty() && swapped.official.apiKey.isEmpty() && swapped.relay.apiKey.isEmpty());
-        ModelStore.save(target, ModelConfig.Mode.OFFICIAL, true, OFFICIAL, RELAY);
+        saveTwoRoutes(ModelConfig.Mode.OFFICIAL, true, SERVICE_OFFICIAL, SERVICE_RELAY);
         prefs.edit().putString("mode", "UNKNOWN_TEST_MODE").commit();
         ModelConfig corrupt = ModelStore.load(target);
         check("unknown strategy fails closed without keyword fallback", !corrupt.remoteEnabled
@@ -400,8 +405,8 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     private void localProtections() throws Exception {
         cleanCase();
         AtomicInteger calls = new AtomicInteger();
-        installFactory(url -> { calls.incrementAndGet(); return fake(removeBody()).at(url); });
-        ModelStore.save(target, ModelConfig.Mode.OFFICIAL, false, OFFICIAL, RELAY);
+        installFactory(url -> { calls.incrementAndGet(); return fake(jevDecisionBody(0)).at(url); });
+        saveTwoRoutes(ModelConfig.Mode.OFFICIAL, false, SERVICE_OFFICIAL, SERVICE_RELAY);
         DemoStore.setAuto(target, true);
         scenario("ad");
         await("disabled remote logs keep", () -> hasLog(102, "保留"));
@@ -426,7 +431,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     private void officialRemoves() throws Exception {
         cleanCase();
         AtomicInteger calls = new AtomicInteger();
-        installFactory(url -> { calls.incrementAndGet(); if (!url.getHost().equals("official.invalid")) throw new IOException("Wrong profile"); return fake(removeBody()).at(url); });
+        installFactory(url -> { calls.incrementAndGet(); if (!url.getHost().equals("official.invalid")) throw new IOException("Wrong profile"); return fake(jevDecisionBody(0)).at(url); });
         configure(ModelConfig.Mode.OFFICIAL, true);
         scenario("ad");
         await("official REMOVE confirmed", () -> activeIds().isEmpty() && hasLog(102, "已清除"));
@@ -436,7 +441,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     private void relayKeeps() throws Exception {
         cleanCase();
         AtomicInteger calls = new AtomicInteger();
-        installFactory(url -> { calls.incrementAndGet(); if (!url.getHost().equals("relay.invalid")) throw new IOException("Wrong profile"); return fake(keepBody()).at(url); });
+        installFactory(url -> { calls.incrementAndGet(); if (!url.getHost().equals("relay.invalid")) throw new IOException("Wrong profile"); return fake(jevDecisionBody(1)).at(url); });
         configure(ModelConfig.Mode.RELAY, true);
         scenario("ad");
         await("relay result logged", () -> hasLog(102, "保留"));
@@ -445,15 +450,14 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     }
 
     private void serviceFailureKeeps() throws Exception {
-        for (String failure : new String[]{"HTTP", "timeout", "unknown action"}) {
+        for (String failure : new String[]{"HTTP", "timeout", "unknown choice"}) {
             cleanCase();
             installFactory(url -> {
                 FakeConnection response = fake("upstream failure");
                 if (failure.equals("HTTP")) response.status = 503;
                 else if (failure.equals("timeout")) response.exception = new SocketTimeoutException("Synthetic timeout");
                 else {
-                    try { response = fake(envelope("{\"action\":\"MAYBE\",\"reason\":\"Synthetic unknown\"}")); }
-                    catch (Exception e) { throw new IOException(e); }
+                    response = fake("{\"answers\":{\"keep\":{\"type\":\"choice\",\"choice\":\"UNKNOWN\"}}}");
                 }
                 return response.at(url);
             });
@@ -473,7 +477,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
             if (url.getHost().equals("official.invalid")) officialCalls.incrementAndGet();
             else if (url.getHost().equals("relay.invalid")) relayCalls.incrementAndGet();
             else throw new IOException("Unexpected profile");
-            return fake(removeBody()).at(url);
+            return fake(jevDecisionBody(0)).at(url);
         });
         configure(ModelConfig.Mode.COMPARE, true);
         scenario("ad");
@@ -502,8 +506,8 @@ public class ModelInstrumentation extends AttentionInstrumentation {
         Gate gate = beginDelayed();
         try {
             scenario("ad"); awaitGate(gate);
-            ModelConfig.Profile newOfficial = new ModelConfig.Profile("official-v2", OFFICIAL.baseUrl, "different-model", OFFICIAL.apiKey);
-            ModelStore.save(target, ModelConfig.Mode.OFFICIAL, true, newOfficial, RELAY);
+            ModelConfig.Profile newOfficial = new ModelConfig.Profile("official-v2", SERVICE_OFFICIAL.baseUrl, "different-model", SERVICE_OFFICIAL.apiKey, ModelConfig.Protocol.JEV_SYSTEMONE);
+            saveTwoRoutes(ModelConfig.Mode.OFFICIAL, true, newOfficial, SERVICE_RELAY);
             DemoStore.setAuto(target, true);
             gate.release.countDown();
             await("configuration result invalidated", () -> hasLog(102, "结果作废"));
@@ -541,7 +545,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
 
     private Gate beginDelayed() throws Exception {
         Gate gate = new Gate(); activeGate = gate;
-        installFactory(url -> { FakeConnection connection = fake(removeBody()); connection.gate = gate; return connection.at(url); });
+        installFactory(url -> { FakeConnection connection = fake(jevDecisionBody(0)); connection.gate = gate; return connection.at(url); });
         configure(ModelConfig.Mode.OFFICIAL, true);
         return gate;
     }
@@ -555,8 +559,13 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     }
 
     private void configure(ModelConfig.Mode mode, boolean auto) throws Exception {
-        ModelStore.save(target, mode, true, OFFICIAL, RELAY);
+        saveTwoRoutes(mode, true, SERVICE_OFFICIAL, SERVICE_RELAY);
         DemoStore.setAuto(target, auto);
+    }
+
+    private ModelConfig saveTwoRoutes(ModelConfig.Mode mode, boolean enabled,
+                                      ModelConfig.Profile first, ModelConfig.Profile second) throws IOException {
+        return ModelStore.save(target, mode, enabled, first, second, SERVICE_BOCHA, 0.5, true, true, false);
     }
 
     private void cleanCase() throws Exception {
@@ -569,7 +578,7 @@ public class ModelInstrumentation extends AttentionInstrumentation {
 
     private void restoreDefaults() throws Exception {
         DemoStore.setAuto(target, false);
-        ModelStore.save(target, ModelConfig.Mode.KEYWORDS, false,
+        saveTwoRoutes(ModelConfig.Mode.KEYWORDS, false,
                 new ModelConfig.Profile("官方", "", "", ""), new ModelConfig.Profile("中转", "", "", ""));
         DemoStore.setTargets(target, DemoStore.DEFAULT_TARGETS);
         DemoStore.setKeepWords(target, DemoStore.DEFAULT_KEEP_WORDS);
@@ -579,6 +588,10 @@ public class ModelInstrumentation extends AttentionInstrumentation {
     private void assertFailOpen(String name, String body) throws Exception {
         ModelClient.Result result = ModelClient.classify(OFFICIAL, INPUT, url -> fake(body).at(url));
         check(name, !result.success && result.action == DecisionEngine.Action.KEEP && !result.error.isEmpty());
+    }
+
+    private static String jevDecisionBody(double probability) {
+        return "{\"answers\":{\"keep\":{\"type\":\"choice\",\"probabilities\":{\"重要\":" + probability + "}}}}";
     }
 
     private boolean containsSecret(File file) throws Exception {

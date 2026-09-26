@@ -64,6 +64,8 @@ public final class ModelClient {
         public final boolean success;
         public final double probability;
         public final boolean hasProbability;
+        /** Last received HTTP status in this call, or zero when no response status was received. */
+        public final int httpStatus;
 
         Result(DecisionEngine.Action action, String reason, String error, long latencyMs, boolean success) {
             this(action, reason, error, latencyMs, success,
@@ -72,6 +74,11 @@ public final class ModelClient {
 
         Result(DecisionEngine.Action action, String reason, String error, long latencyMs, boolean success,
                double probability, boolean hasProbability) {
+            this(action, reason, error, latencyMs, success, probability, hasProbability, 0);
+        }
+
+        Result(DecisionEngine.Action action, String reason, String error, long latencyMs, boolean success,
+               double probability, boolean hasProbability, int httpStatus) {
             this.action = action;
             this.reason = reason;
             this.error = error;
@@ -79,6 +86,11 @@ public final class ModelClient {
             this.success = success;
             this.probability = probability;
             this.hasProbability = hasProbability;
+            this.httpStatus = httpStatus;
+        }
+
+        private Result withHttpStatus(int status) {
+            return new Result(action, reason, error, latencyMs, success, probability, hasProbability, status);
         }
     }
 
@@ -138,6 +150,7 @@ public final class ModelClient {
         HttpsURLConnection connection = null;
         ScheduledFuture<?> timeoutTask = null;
         AtomicBoolean expired = new AtomicBoolean(false);
+        int httpStatus = 0;
         try {
             if (Looper.myLooper() == Looper.getMainLooper()) throw new SafeFailure("MAIN_THREAD", "请在后台线程执行模型请求");
             if (Thread.currentThread().isInterrupted()) throw new SafeFailure("INTERRUPTED", "请求已取消");
@@ -185,6 +198,7 @@ public final class ModelClient {
                     }, Math.max(1, RetryPolicy.remainingMillis(elapsed(started), REQUEST_TIMEOUT_MS)), TimeUnit.MILLISECONDS);
                     try (OutputStream output = connection.getOutputStream()) { output.write(body); }
                     int status = connection.getResponseCode();
+                    httpStatus = status;
                     ensureActive(started, expired);
                     if (status >= 300 && status <= 399) throw new SafeFailure("REDIRECT_BLOCKED", "接口返回重定向，已拒绝转发通知和密钥");
                     long retryDelay = RetryPolicy.nextDelayMillis(status, retriesUsed, elapsed(started), REQUEST_TIMEOUT_MS,
@@ -200,8 +214,9 @@ public final class ModelClient {
                         }
                         continue;
                     }
-                    if (status == 401) throw new SafeFailure("HTTP_401", "API Key无效或没有接口权限，请检查密钥");
-                    if (status == 422) throw new SafeFailure("HTTP_422", "请求格式或输入不符合接口要求，请检查协议与模型配置");
+                    if (status == 401) throw new SafeFailure("HTTP_401", "key 无效（API Key无效或没有接口权限），请检查密钥");
+                    if (status == 422) throw new SafeFailure("HTTP_422", "协议或格式不对，请检查 Jev 协议、请求格式与模型配置");
+                    if (status == 404) throw new SafeFailure("HTTP_404", "地址不对，1052 请用 /jev");
                     if (status < 200 || status > 299) throw new SafeFailure("HTTP_" + status, "接口返回HTTP " + status);
                     String contentType = connection.getContentType();
                     if (contentType == null || !contentType.toLowerCase(Locale.ROOT).split(";", 2)[0].trim().equals("application/json")) {
@@ -234,29 +249,29 @@ public final class ModelClient {
                         result = parseResponse(decoded, profile.apiKey, started);
                     }
                     ensureActive(started, expired);
-                    return result;
+                    return result.withHttpStatus(httpStatus);
                 } finally {
                     if (timeoutTask != null) { timeoutTask.cancel(false); timeoutTask = null; }
                     if (connection != null) { connection.disconnect(); connection = null; }
                 }
             }
         } catch (SafeFailure failure) {
-            return failed(failure.code, failure.safeReason, started);
+            return failed(failure.code, failure.safeReason, started, httpStatus);
         } catch (SocketTimeoutException failure) {
-            return failed("TIMEOUT", "模型请求超时", started);
+            return failed("TIMEOUT", "模型请求超时", started, httpStatus);
         } catch (SSLException failure) {
-            return failed("TLS_ERROR", "HTTPS证书或安全连接校验失败", started);
+            return failed("TLS_ERROR", "HTTPS证书或安全连接校验失败", started, httpStatus);
         } catch (CharacterCodingException failure) {
-            return failed("INVALID_JSON", "接口响应不是有效UTF-8 JSON", started);
+            return failed("INVALID_JSON", "接口响应不是有效UTF-8 JSON", started, httpStatus);
         } catch (MalformedJsonException failure) {
-            return failed("INVALID_JSON", "接口响应不符合严格JSON格式", started);
+            return failed("INVALID_JSON", "接口响应不符合严格JSON格式", started, httpStatus);
         } catch (JSONException | IllegalStateException failure) {
-            return failed("INVALID_JSON", "接口响应不符合严格JSON决策格式", started);
+            return failed("INVALID_JSON", "接口响应不符合严格JSON决策格式", started, httpStatus);
         } catch (IOException failure) {
             return failed(expired.get() ? "TIMEOUT" : "NETWORK_ERROR",
-                    expired.get() ? "模型请求超时" : "模型网络请求失败", started);
+                    expired.get() ? "模型请求超时" : "模型网络请求失败", started, httpStatus);
         } catch (RuntimeException failure) {
-            return failed("CLIENT_ERROR", "模型请求未完成", started);
+            return failed("CLIENT_ERROR", "模型请求未完成", started, httpStatus);
         } finally {
             if (timeoutTask != null) timeoutTask.cancel(false);
             if (connection != null) connection.disconnect();
@@ -460,8 +475,9 @@ public final class ModelClient {
 
     private static long elapsed(long started) { return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started); }
 
-    private static Result failed(String code, String reason, long started) {
-        return new Result(DecisionEngine.Action.KEEP, reason + "；默认保留", code, elapsed(started), false);
+    private static Result failed(String code, String reason, long started, int httpStatus) {
+        return new Result(DecisionEngine.Action.KEEP, reason + "；默认保留", code, elapsed(started), false,
+                Double.NaN, false, httpStatus);
     }
 
     static final class SafeFailure extends Exception {

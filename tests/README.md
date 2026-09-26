@@ -2,7 +2,7 @@
 
 从仓库根目录执行以下命令。这里说明如何复现及每套测试覆盖什么，不预填本版通过数量，也不代替本次运行的原始输出。
 
-## 1. 三组纯 Java 测试
+## 1. 四组纯 Java 测试
 
 仅需 JDK 17，不需要 Android 设备、Python、网络或模型凭据。设置 `JAVA_HOME`，或将 `java`、`javac` 加入 PATH。
 
@@ -18,13 +18,14 @@ Linux／macOS Bash：
 bash tests/run-unit-tests.sh
 ```
 
-两个入口使用相同源码，编译至 `build/unit-tests`，依次运行三组测试；任一编译或测试失败即返回失败。
+两个入口使用相同源码，编译至 `build/unit-tests`，依次运行四组测试；任一编译或测试失败即返回失败。
 
 | 测试类 | 主要范围 |
 |---|---|
 | `DecisionEngineTest` | 来源精确匹配、保留词优先、空内容、受保护类型、分隔符、长文本 |
 | `SystemOneProtocolTest` | JEV 中文请求与路径、严格 JSON／概率解析、choice 回退、阈值、预设及重试预算等纯逻辑 |
 | `ShortTermMemoryTest` | 行为映射、alpha／beta 衰减、负 raw n 与非负有效 n、logit 融合、零证据／零权重原值保持、前缀隔离与持久化 |
+| `p0_api_config_test` | 1052 默认预设、四模型順序及请求 body、`/jev/v1/systemone` 路径、旧 Chat 转 Jev、迁移复核暂停远程处理、官方／博查预设 |
 
 这些是确定性逻辑检查。通知读取、真实系统移除原因、Android Keystore 和实际 TLS 连接需要下面的模拟器测试。
 
@@ -48,7 +49,7 @@ bash tests/run-unit-tests.sh
 |---|---|
 | `run-device-smoke.ps1` | 两个独立 App 之间的真实系统通知：观察保留、关键词清除、保护规则、更新通知和系统移除确认 |
 | `run-model-smoke.ps1` | Android 上的模型协议、配置与密钥存储、失败回退及异步竞态；使用测试连接／合成响应 |
-| `run-attention-smoke.ps1` | 真正 localhost HTTPS 请求、三路 SystemOne 合成响应、真实点击／逐条划除回调、前缀隔离、概率融合、近期行为请求内容和一次性忽略记录 |
+| `run-attention-smoke.ps1` | 真正 localhost HTTPS 请求、三路对照、设置页四个 1052 模型选择到请求 body、共享密钥加密及旧配置复核、真实点击／逐条划除回调、前缀隔离、概率融合与一次性忽略记录 |
 
 脚本安装测试包、调整测试应用权限、发送／清理通知，并重置 Demo 配置或本地数据。不要指向保留个人状态的手机。模型与注意力脚本会要求 `emulator-*` 序列号；基线脚本同样应使用可丢弃模拟器。脚本成功标志与检查数量来自当次 instrumentation 输出，不能复制旧版本数字作为本次结果。
 
@@ -62,7 +63,7 @@ bash tests/run-unit-tests.sh
 
 在已有合适 Python 环境中执行即可。脚本不会为你自动安装依赖；缺少模块时，应先识别环境问题，不能把它当成模型或注意力算法失败。
 
-`systemone_mock_server.py` 只绑定宿主机 `127.0.0.1` 的临时端口，使用真实 HTTPS。`adb reverse` 将模拟器中的 `https://localhost:<port>` 转发到该服务。服务核对三条测试路由的 `state/questions.keep`，固定返回合成保留概率 `0.7`；不请求外部模型。
+`systemone_mock_server.py` 只绑定宿主机 `127.0.0.1` 的临时端口，使用真实 HTTPS。`adb reverse` 将模拟器中的 `https://localhost:<port>` 转发到该服务。服务核对三条对照测试路由及 `/jev/v1/systemone` 的 `state/questions.keep`，固定返回合成保留概率 `0.7`。P0 用例实际操作设置页模型下拉框并保存，仅在测试中把预设地址替换为 localhost；主机脚本独立检查四个 1052 模型名称均出现在成功请求的 body 中。不请求外部模型，不截取凭据页面。
 
 这是实际 HTTP／TLS 请求链路，并非仅替换 Java 返回值。它证明的是客户端与本地合成服务的传输和处理流程，不是任一公开服务的可用性。
 

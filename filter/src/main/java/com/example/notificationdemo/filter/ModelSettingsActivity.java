@@ -32,6 +32,7 @@ import android.widget.Toast;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.net.URI;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -48,6 +49,10 @@ public final class ModelSettingsActivity extends Activity {
     private static final int AMBER = 0xFF96590F;
     private static final int SOFT_AMBER = 0xFFFFF6E2;
     private static final int MODE_ID_BASE = 4100;
+    private static final int PRESET_TEAM = 0;
+    private static final int PRESET_TYPESAFE = 1;
+    private static final int PRESET_BOCHA = 2;
+    private static final int PRESET_CUSTOM = 3;
     private static final ModelConfig.Mode[] MODE_CHOICES = {ModelConfig.Mode.KEYWORDS,
             ModelConfig.Mode.OFFICIAL, ModelConfig.Mode.BOCHA, ModelConfig.Mode.RELAY, ModelConfig.Mode.COMPARE};
 
@@ -57,12 +62,15 @@ public final class ModelSettingsActivity extends Activity {
     private Future<?> testTask;
     private ModelConfig.Mode selectedMode = ModelConfig.Mode.KEYWORDS;
     private ModelConfig saved;
+    private String teamKey = "";
+    private String displayedKeyOrigin = "";
     private int selectedProfile;
     private boolean loading;
     private boolean dirty;
     private boolean testRunning;
     private boolean destroyed;
     private boolean storageUnavailable;
+    private boolean teamKeyNeedsReview;
     private RadioGroup modes;
     private Switch remoteSwitch;
     private Button officialButton;
@@ -70,17 +78,22 @@ public final class ModelSettingsActivity extends Activity {
     private Button relayButton;
     private Button saveButton;
     private Button testButton;
-    private Button presetButton;
     private TextView strategyDetail;
     private TextView saveStatus;
     private TextView profileTitle;
     private TextView testStatus;
+    private TextView migrationNotice;
+    private TextView keyDescription;
+    private TextView externalWarning;
     private EditText labelField;
     private EditText urlField;
     private EditText modelField;
     private EditText keyField;
     private EditText thresholdField;
-    private Spinner protocolField;
+    private Spinner presetField;
+    private Spinner teamModelField;
+    private LinearLayout teamModelPanel;
+    private LinearLayout modelPanel;
     private CheckBox compareOfficial;
     private CheckBox compareBocha;
     private CheckBox compareRelay;
@@ -91,18 +104,21 @@ public final class ModelSettingsActivity extends Activity {
         String baseUrl = "";
         String model = "";
         String key = "";
-        ModelConfig.Protocol protocol = ModelConfig.Protocol.JEV_SYSTEMONE;
+        boolean originKeyCleared;
+        int preset = PRESET_CUSTOM;
 
         void read(ModelConfig.Profile profile) {
             label = profile.label;
             baseUrl = profile.baseUrl;
             model = profile.model;
             key = profile.apiKey;
-            protocol = profile.protocol;
+            originKeyCleared = false;
+            preset = presetIndex(profile);
         }
 
         ModelConfig.Profile profile() {
-            return new ModelConfig.Profile(label.trim(), baseUrl.trim(), model.trim(), key.trim(), protocol);
+            return new ModelConfig.Profile(label.trim(), baseUrl.trim(), model.trim(), key.trim(),
+                    ModelConfig.Protocol.JEV_SYSTEMONE);
         }
 
         void clearKey() { key = ""; }
@@ -117,6 +133,7 @@ public final class ModelSettingsActivity extends Activity {
         drafts[0].read(saved.official);
         drafts[1].read(saved.bocha);
         drafts[2].read(saved.relay);
+        readSharedTeamKey();
         selectedProfile = selectedMode == ModelConfig.Mode.BOCHA ? 1 : selectedMode == ModelConfig.Mode.RELAY ? 2 : 0;
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(BACKGROUND);
@@ -155,7 +172,7 @@ public final class ModelSettingsActivity extends Activity {
         space(page, 22);
         page.addView(text("模型与三路对照", 28, INK, true));
         space(page, 8);
-        page.addView(text("三路分别配置协议、地址和模型 ID。预设不含密钥；保存后先用合成消息测试。", 14, MUTED, false));
+        page.addView(text("统一使用 Jev SystemOne。先选择服务预设与模型，保存后用合成消息测试；预设不含密钥。", 14, MUTED, false));
         space(page, 22);
 
         makeStrategyCard(page);
@@ -176,11 +193,13 @@ public final class ModelSettingsActivity extends Activity {
         compareRelay.setChecked(saved.compareRelay);
         populateProfile();
         loading = false;
-        dirty = false;
-        saveStatus.setText(storageUnavailable
+        dirty = teamKeyNeedsReview;
+        saveStatus.setText(teamKeyNeedsReview
+                ? "旧 1052 路线的 key 不一致，页面未沿用任何一份。请重新填写共用的平台 key 并保存。"
+                : storageUnavailable
                 ? "密钥存储不可用：连接测试已暂停。请重新填写所需配置的完整密钥并保存；旧密钥无法在此恢复。"
                 : "当前配置已保存；保存修改后将切回观察模式。");
-        if (state != null && !storageUnavailable) {
+        if (state != null && !storageUnavailable && !teamKeyNeedsReview) {
             saveStatus.setText("已重新读取上次保存的配置。未保存内容（含密钥）不会随页面重建恢复。");
         }
         updateViewState();
@@ -192,8 +211,8 @@ public final class ModelSettingsActivity extends Activity {
         space(card, 10);
         modes = new RadioGroup(this);
         modes.setOrientation(RadioGroup.VERTICAL);
-        String[] names = {"关键词 · 本机规则（默认）", "TypeSafe 官方 · 单路判断",
-                "Bocha 官方 · 单路判断", "自训中转 · 单路判断", "多路对照 · 只观察，不清除"};
+        String[] names = {"关键词 · 本机规则（默认）", "路线 1 · 单路判断",
+                "路线 2 · 单路判断", "路线 3 · 单路判断", "多路对照 · 只观察，不清除"};
         for (int i = 0; i < names.length; i++) {
             RadioButton choice = new RadioButton(this);
             choice.setId(MODE_ID_BASE + i);
@@ -220,9 +239,9 @@ public final class ModelSettingsActivity extends Activity {
         comparePanel = column();
         space(comparePanel, 10);
         comparePanel.addView(text("选择参与对照的路线", 13, INK, true));
-        compareOfficial = routeCheck(comparePanel, "TypeSafe 官方");
-        compareBocha = routeCheck(comparePanel, "Bocha 官方");
-        compareRelay = routeCheck(comparePanel, "自训中转");
+        compareOfficial = routeCheck(comparePanel, "路线 1");
+        compareBocha = routeCheck(comparePanel, "路线 2");
+        compareRelay = routeCheck(comparePanel, "路线 3");
         card.addView(comparePanel, fullWidth());
         thresholdField = input(card, "保留阈值 · 0 至 1", "0.5", false, false);
         thresholdField.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
@@ -250,13 +269,16 @@ public final class ModelSettingsActivity extends Activity {
         LinearLayout card = card(parent);
         card.addView(text("02  服务配置", 17, INK, true));
         space(card, 8);
-        card.addView(text("预设仅提供地址、协议和模型标识，不提供密钥，也不代表已完成真实连通验证。各路密钥分别保存。", 13, MUTED, false));
+        card.addView(text("默认三路为团队 1052 的微调版 / 原版 / 官方模型。1052 的四个模型共用一份平台 key；其他服务使用各自的 key。", 13, MUTED, false));
+        space(card, 8);
+        migrationNotice = text("", 13, AMBER, false);
+        card.addView(migrationNotice, fullWidth());
         space(card, 14);
         LinearLayout selectors = new LinearLayout(this);
         selectors.setOrientation(LinearLayout.HORIZONTAL);
-        officialButton = button("TypeSafe", false);
-        bochaButton = button("Bocha", false);
-        relayButton = button("自训中转", false);
+        officialButton = button("路线 1", false);
+        bochaButton = button("路线 2", false);
+        relayButton = button("路线 3", false);
         LinearLayout.LayoutParams first = new LinearLayout.LayoutParams(0, -2, 1);
         first.setMarginEnd(dp(8));
         selectors.addView(officialButton, first);
@@ -268,33 +290,66 @@ public final class ModelSettingsActivity extends Activity {
         bochaButton.setOnClickListener(view -> selectProfile(1));
         relayButton.setOnClickListener(view -> selectProfile(2));
         card.addView(selectors, fullWidth());
-        space(card, 8);
-        presetButton = button("载入当前路线预设 · 保留密钥", false);
-        presetButton.setOnClickListener(view -> loadPreset());
-        card.addView(presetButton, fullWidth());
         space(card, 16);
         profileTitle = text("", 14, TEAL, true);
         card.addView(profileTitle);
         space(card, 12);
-        card.addView(text("接口协议", 13, INK, true));
-        protocolField = new Spinner(this);
-        protocolField.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"JEV SystemOne · state / questions / choices", "Chat Completions · 兼容聊天补全"}));
-        protocolField.setSaveEnabled(false);
-        protocolField.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        card.addView(text("服务预设", 13, INK, true));
+        presetField = spinner(new String[]{"团队中转 1052（推荐）", "TypeSafe 官方", "Bocha 团队网关", "自定义 Jev 服务"});
+        presetField.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (!loading && drafts[selectedProfile].protocol != protocolValue()) {
-                    drafts[selectedProfile].protocol = protocolValue();
+                if (!loading && !testRunning && drafts[selectedProfile].preset != position) {
+                    loadPreset(position);
+                }
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        card.addView(presetField, fullWidth());
+        space(card, 8);
+        card.addView(text("接口协议：Jev SystemOne（固定）", 12, MUTED, false));
+        labelField = input(card, "配置标签 / 版本标识", "例如：本轮基线 v1", false, false);
+        urlField = input(card, "接口地址 · HTTPS", "JEV 可填根地址、/v1 或 /v1/systemone", false, true);
+        teamModelPanel = column();
+        space(teamModelPanel, 15);
+        teamModelPanel.addView(text("1052 模型 · 共用平台 key", 13, INK, true));
+        teamModelField = spinner(new String[]{"local-systemone-ft · 最终微调版（默认）",
+                "local-systemone-v1 · 原版", "typesafe-jev · 官方", "bocha-jev · 博查"});
+        teamModelField.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String[] models = ModelConfig.team1052Models();
+                if (!loading && !testRunning && drafts[selectedProfile].preset == PRESET_TEAM
+                        && position >= 0 && position < models.length
+                        && !models[position].equals(drafts[selectedProfile].model)) {
+                    Draft draft = drafts[selectedProfile];
+                    draft.model = models[position];
+                    boolean previousLoading = loading;
+                    loading = true;
+                    modelField.setText(draft.model);
+                    loading = previousLoading;
                     markDirty();
                 }
             }
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
-        card.addView(protocolField, fullWidth());
-        labelField = input(card, "配置标签 / 版本标识", "例如：本轮基线 v1", false, false);
-        urlField = input(card, "接口地址 · HTTPS", "JEV 可填根地址、/v1 或 /v1/systemone", false, true);
-        modelField = input(card, "模型 ID", "服务文档中的精确模型标识", false, false);
+        teamModelPanel.addView(teamModelField, fullWidth());
+        card.addView(teamModelPanel, fullWidth());
+        modelPanel = column();
+        modelField = input(modelPanel, "模型 ID", "服务文档中的精确模型标识", false, false);
+        card.addView(modelPanel, fullWidth());
+        externalWarning = text("该模型会把通知内容发往外部公司，真实私聊请用本地模型", 13, AMBER, false);
+        card.addView(externalWarning, fullWidth());
         keyField = input(card, "API Key · 本机加密保存", "无需鉴权的自训端点可留空", true, false);
+        keyDescription = text("", 12, MUTED, false);
+        card.addView(keyDescription, fullWidth());
+        urlField.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (!loading) {
+                    enforceKeyOrigin();
+                }
+            }
+            @Override public void afterTextChanged(Editable editable) {}
+        });
         card.addView(text("地址不含账号密码、查询参数或片段。手机测试时不要填写电脑的 localhost；密钥请填写在独立的 API Key 字段。", 12, MUTED, false));
         space(card, 16);
         saveButton = button("保存配置并关闭自动清除", true);
@@ -338,31 +393,49 @@ public final class ModelSettingsActivity extends Activity {
         updateViewState();
     }
 
-    private void loadPreset() {
-        if (testRunning) return;
-        if (selectedProfile == 2) {
-            saveStatus.setText("自训中转没有固定的部署地址；请填写您实际部署的 HTTPS 地址与模型 ID，密钥不会预填。");
+    private void loadPreset(int which) {
+        if (testRunning) {
             return;
         }
         captureProfile();
-        ModelConfig.Profile preset = selectedProfile == 0 ? ModelConfig.presetTypeSafe() : ModelConfig.presetBocha();
         Draft draft = drafts[selectedProfile];
-        draft.label = preset.label;
-        draft.baseUrl = preset.baseUrl;
-        draft.model = preset.model;
-        draft.protocol = preset.protocol;
+        if (which == PRESET_CUSTOM) {
+            // An editable endpoint must never carry a key copied from another service.
+            draft.label = "自定义 Jev 服务";
+            draft.baseUrl = "";
+            draft.model = "";
+            draft.key = "";
+        } else {
+            ModelConfig.Profile preset = which == PRESET_TEAM ? ModelConfig.presetTeam1052()
+                    : which == PRESET_TYPESAFE ? ModelConfig.presetTypeSafe() : ModelConfig.presetBocha();
+            draft.label = preset.label;
+            draft.baseUrl = preset.baseUrl;
+            draft.model = preset.model;
+            draft.key = which == PRESET_TEAM ? teamKey : "";
+        }
+        draft.preset = which;
+        draft.originKeyCleared = false;
         populateProfile();
         markDirty();
-        saveStatus.setText("已填入当前路线地址、协议与模型预设，原密钥未改动；保存后再做连接测试。");
+        saveStatus.setText(which == PRESET_TEAM
+                ? "已载入 1052 预设；四个模型共用平台 key。请保存后测试。"
+                : "已切换服务预设，该路线 key 已清空。请填写对应服务的 key，保存后测试。");
     }
 
     private void captureProfile() {
+        enforceKeyOrigin();
         Draft draft = drafts[selectedProfile];
         draft.label = labelField.getText().toString();
         draft.baseUrl = urlField.getText().toString();
         draft.model = modelField.getText().toString();
         draft.key = keyField.getText().toString();
-        draft.protocol = protocolValue();
+        if (!draft.key.isEmpty()) {
+            draft.originKeyCleared = false;
+        }
+        if (ModelConfig.isTeam1052(draft.profile())) {
+            teamKey = draft.key;
+            syncSharedTeamKey();
+        }
     }
 
     private void populateProfile() {
@@ -373,9 +446,62 @@ public final class ModelSettingsActivity extends Activity {
         urlField.setText(draft.baseUrl);
         modelField.setText(draft.model);
         keyField.setText(draft.key);
-        protocolField.setSelection(draft.protocol == ModelConfig.Protocol.JEV_SYSTEMONE ? 0 : 1);
+        presetField.setSelection(draft.preset);
+        String[] models = ModelConfig.team1052Models();
+        int selectedModel = 0;
+        for (int i = 0; i < models.length; i++) {
+            if (models[i].equals(draft.model)) {
+                selectedModel = i;
+                break;
+            }
+        }
+        teamModelField.setSelection(selectedModel);
         keyField.setSelection(keyField.length());
+        displayedKeyOrigin = credentialOrigin(draft.baseUrl);
         loading = previousLoading;
+    }
+
+    private void enforceKeyOrigin() {
+        String nextOrigin = credentialOrigin(urlField.getText().toString());
+        if (displayedKeyOrigin.equals(nextOrigin)) {
+            return;
+        }
+        displayedKeyOrigin = nextOrigin;
+        Draft draft = drafts[selectedProfile];
+        draft.originKeyCleared |= keyField.length() > 0;
+        draft.key = "";
+        // Clear only this editor's credential. The independent 1052 key remains
+        // available to other 1052 routes and to an explicit return to that preset.
+        keyField.getText().clear();
+        updateViewState();
+    }
+
+    private static String credentialOrigin(String address) {
+        String value = address.trim();
+        int schemeEnd = value.indexOf("://");
+        if (schemeEnd < 1) {
+            return "";
+        }
+        int end = value.length();
+        // Parse only the authority so an in-progress same-host path correction
+        // (including temporarily unescaped characters) cannot discard its key.
+        for (char delimiter : new char[]{'/', '?', '#'}) {
+            int index = value.indexOf(delimiter, schemeEnd + 3);
+            if (index >= 0) {
+                end = Math.min(end, index);
+            }
+        }
+        try {
+            URI origin = URI.create(value.substring(0, end));
+            int port = origin.getPort();
+            if (!"https".equalsIgnoreCase(origin.getScheme()) || origin.getHost() == null
+                    || origin.getRawUserInfo() != null || port == 0 || port < -1 || port > 65535) {
+                return "";
+            }
+            return "https://" + origin.getHost().toLowerCase(Locale.ROOT) + ":" + (port == -1 ? 443 : port);
+        } catch (IllegalArgumentException invalid) {
+            return "";
+        }
     }
 
     private void markDirty() {
@@ -392,6 +518,16 @@ public final class ModelSettingsActivity extends Activity {
             return;
         }
         captureProfile();
+        syncSharedTeamKey();
+        boolean hasTeamRoute = false;
+        for (Draft draft : drafts) {
+            hasTeamRoute |= ModelConfig.isTeam1052(draft.profile());
+        }
+        if (teamKeyNeedsReview && hasTeamRoute && teamKey.trim().isEmpty()) {
+            saveStatus.setText("旧 1052 路线的 key 不一致。请重新填写要共用的 1052 平台 key，再保存；不会替您选择旧 key。");
+            saveStatus.setTextColor(AMBER);
+            return;
+        }
         double threshold;
         try {
             threshold = Double.parseDouble(thresholdField.getText().toString().trim());
@@ -409,6 +545,7 @@ public final class ModelSettingsActivity extends Activity {
             drafts[0].read(saved.official);
             drafts[1].read(saved.bocha);
             drafts[2].read(saved.relay);
+            readSharedTeamKey();
             storageUnavailable = !saved.storageError.isEmpty();
             loading = true;
             selectedMode = saved.mode;
@@ -450,6 +587,10 @@ public final class ModelSettingsActivity extends Activity {
             testStatus.setText("密钥存储不可用。请重新填写所需配置的完整密钥并保存，连接测试暂不执行。");
             return;
         }
+        if (teamKeyNeedsReview) {
+            testStatus.setText("请先重新填写共用的 1052 平台 key 并保存，再测试连接。");
+            return;
+        }
         final ModelConfig.Profile profile = selectedProfile == 0 ? saved.official
                 : selectedProfile == 1 ? saved.bocha : saved.relay;
         final double testThreshold = saved.threshold;
@@ -488,15 +629,20 @@ public final class ModelSettingsActivity extends Activity {
         } else if (result.success) {
             String verdict = result.action == DecisionEngine.Action.REMOVE ? "建议清除"
                     : result.action == DecisionEngine.Action.SKIP ? "跳过" : "保留";
-            String probability = result.hasProbability
-                    ? String.format(Locale.CHINA, "p_jev = %.3f", result.probability)
-                    : "无原始概率（由 choice 换算）";
-            String output = String.format(Locale.CHINA, "%s测试成功 · %d ms\n%s\n返回判断：%s\n原因：%s\n仅代表这次合成请求成功，尚未验证真实通知效果。",
-                    route, result.latencyMs, probability, verdict, redact(result.reason, profile.apiKey));
+            String probability = String.format(Locale.CHINA, "保留概率 p_jev = %.3f", result.probability)
+                    + (result.hasProbability ? "" : "（由 choice 换算）");
+            String output = String.format(Locale.CHINA, "%s测试成功 · %s · %d ms\n%s\n返回判断：%s\n原因：%s\n仅代表这次合成请求成功，尚未验证真实通知效果。",
+                    route, httpStatus(result.httpStatus), result.latencyMs, probability, verdict,
+                    redact(result.reason, profile.apiKey));
             testStatus.setText(output);
         } else {
-            testStatus.setText("测试失败 · " + redact(result.error, profile.apiKey)
-                    + "\n" + redact(result.reason, profile.apiKey)
+            String reason = result.httpStatus == 401 ? "key 无效"
+                    : result.httpStatus == 422 ? "协议或格式不对"
+                    : result.httpStatus == 404 ? "地址不对，1052 请用 /jev"
+                    : redact(result.reason, profile.apiKey);
+            testStatus.setText("测试失败 · " + httpStatus(result.httpStatus) + " · " + result.latencyMs + " ms"
+                    + "\n保留概率 p_jev = —（本次未取得有效结果）"
+                    + "\n" + reason + " · " + redact(result.error, profile.apiKey)
                     + "\n未验证该接口兼容。请核对基础地址、鉴权方式、模型 ID 和服务文档。");
         }
         updateViewState();
@@ -509,11 +655,11 @@ public final class ModelSettingsActivity extends Activity {
         String detail = selectedMode == ModelConfig.Mode.KEYWORDS
                 ? "关键词在本机判断；本策略不会调用远程模型。"
                 : selectedMode == ModelConfig.Mode.OFFICIAL
-                ? "目标通知送到 TypeSafe 配置。保存后先观察概率，再按需开启自动清除。"
+                ? "目标通知送到路线 1。保存后先观察概率，再按需开启自动清除。"
                 : selectedMode == ModelConfig.Mode.BOCHA
-                ? "目标通知送到 Bocha 配置。协议必须与该路服务文档一致。"
+                ? "目标通知送到路线 2。请先用合成消息确认配置。"
                 : selectedMode == ModelConfig.Mode.RELAY
-                ? "目标通知送到中转配置对应的服务；自训模型需由该服务提供兼容接口。"
+                ? "目标通知送到路线 3。请先用合成消息确认配置。"
                 : "同一通知分别交给已勾选路线，最多三路；显示原始与融合概率，对照始终不清除。";
         strategyDetail.setText(detail);
         profileTitle.setText("正在编辑：" + routeName(selectedProfile));
@@ -526,14 +672,30 @@ public final class ModelSettingsActivity extends Activity {
         officialButton.setEnabled(!testRunning);
         bochaButton.setEnabled(!testRunning);
         relayButton.setEnabled(!testRunning);
-        presetButton.setEnabled(!testRunning);
+        presetField.setEnabled(!testRunning);
         saveButton.setEnabled(!testRunning);
-        testButton.setEnabled(!testRunning && !storageUnavailable);
+        testButton.setEnabled(!testRunning && !storageUnavailable && !teamKeyNeedsReview);
         labelField.setEnabled(!testRunning);
-        urlField.setEnabled(!testRunning);
+        boolean teamPreset = drafts[selectedProfile].preset == PRESET_TEAM;
+        urlField.setEnabled(!testRunning && !teamPreset);
         modelField.setEnabled(!testRunning);
         keyField.setEnabled(!testRunning);
-        protocolField.setEnabled(!testRunning);
+        keyField.setHint(teamPreset ? "填写 1052 平台 key，四个模型共用" : "填写对应服务 key；无需鉴权的端点可留空");
+        teamModelField.setEnabled(!testRunning);
+        teamModelPanel.setVisibility(teamPreset ? View.VISIBLE : View.GONE);
+        modelPanel.setVisibility(teamPreset ? View.GONE : View.VISIBLE);
+        String selectedModel = drafts[selectedProfile].model;
+        externalWarning.setVisibility(teamPreset && ("typesafe-jev".equals(selectedModel)
+                || "bocha-jev".equals(selectedModel)) ? View.VISIBLE : View.GONE);
+        keyDescription.setText(drafts[selectedProfile].originKeyCleared && keyField.length() == 0
+                ? "服务地址的主机或端口已更换，原 key 已清空。请重新填写这个服务的 key；无需鉴权的端点可留空。"
+                : teamPreset
+                ? "1052 平台 key 只需填写一次；保存时同步到所有使用 1052 的路线和模型。"
+                : "请使用该服务的 key；切换到其他服务预设时不会携带这份 key。");
+        migrationNotice.setVisibility(saved != null && saved.needsReview ? View.VISIBLE : View.GONE);
+        if (saved != null && saved.needsReview) {
+            migrationNotice.setText(saved.migrationNotice);
+        }
         thresholdField.setEnabled(!testRunning);
         compareOfficial.setEnabled(!testRunning);
         compareBocha.setEnabled(!testRunning);
@@ -555,6 +717,7 @@ public final class ModelSettingsActivity extends Activity {
         for (Draft draft : drafts) {
             draft.clearKey();
         }
+        teamKey = "";
         if (keyField != null) {
             keyField.getText().clear();
         }
@@ -578,12 +741,74 @@ public final class ModelSettingsActivity extends Activity {
     }
 
     private static String routeName(int profile) {
-        return profile == 0 ? "TypeSafe 官方" : profile == 1 ? "Bocha 官方" : "自训中转";
+        return "路线 " + (profile + 1);
     }
 
-    private ModelConfig.Protocol protocolValue() {
-        return protocolField.getSelectedItemPosition() == 0
-                ? ModelConfig.Protocol.JEV_SYSTEMONE : ModelConfig.Protocol.CHAT_COMPLETIONS;
+    private static String httpStatus(int status) {
+        return status > 0 ? "HTTP " + status : "未收到 HTTP 响应";
+    }
+
+    private void readSharedTeamKey() {
+        teamKey = "";
+        teamKeyNeedsReview = false;
+        for (Draft draft : drafts) {
+            if (ModelConfig.isTeam1052(draft.profile()) && !draft.key.isEmpty()) {
+                if (!teamKey.isEmpty() && !teamKey.equals(draft.key)) {
+                    teamKeyNeedsReview = true;
+                    break;
+                }
+                teamKey = draft.key;
+            }
+        }
+        if (teamKeyNeedsReview) {
+            teamKey = "";
+        }
+        syncSharedTeamKey();
+    }
+
+    private void syncSharedTeamKey() {
+        for (Draft draft : drafts) {
+            if (ModelConfig.isTeam1052(draft.profile())) {
+                draft.key = teamKey;
+            }
+        }
+    }
+
+    private static int presetIndex(ModelConfig.Profile profile) {
+        if (ModelConfig.isTeam1052(profile)) {
+            for (String model : ModelConfig.team1052Models()) {
+                if (model.equals(profile.model)
+                        && sameEndpoint(profile.baseUrl, ModelConfig.TEAM_1052_BASE_URL)) {
+                    return PRESET_TEAM;
+                }
+            }
+        }
+        if (sameEndpoint(profile.baseUrl, ModelConfig.presetTypeSafe().baseUrl)) {
+            return PRESET_TYPESAFE;
+        }
+        if (sameEndpoint(profile.baseUrl, ModelConfig.presetBocha().baseUrl)) {
+            return PRESET_BOCHA;
+        }
+        return PRESET_CUSTOM;
+    }
+
+    private static boolean sameEndpoint(String first, String second) {
+        try {
+            return SystemOneProtocol.endpoint(first).equals(SystemOneProtocol.endpoint(second));
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
+    }
+
+    private Spinner spinner(String[] choices) {
+        Spinner spinner = new Spinner(this);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, choices);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setSaveEnabled(false);
+        spinner.setMinimumHeight(dp(48));
+        return spinner;
     }
 
     private CheckBox routeCheck(LinearLayout parent, String title) {

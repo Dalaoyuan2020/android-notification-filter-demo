@@ -71,11 +71,16 @@ try {
     foreach ($route in @('/official/v1/systemone', '/bocha/v1/systemone', '/relay/v1/systemone')) {
         if (-not ($requests | Where-Object { $_.path -eq $route -and $_.status -eq 200 })) { throw "No successful HTTPS request for $route" }
     }
+    foreach ($model in @('local-systemone-ft', 'local-systemone-v1', 'typesafe-jev', 'bocha-jev')) {
+        if (-not ($requests | Where-Object { $_.path -eq '/jev/v1/systemone' -and $_.status -eq 200 -and $_.body.model -eq $model })) {
+            throw "No successful native HTTPS request body for 1052 model $model"
+        }
+    }
     if ($requests | Where-Object { $_.status -ne 200 -or $_.authorization_present }) { throw 'Fixture observed a rejected request or unexpected Authorization header.' }
     if (-not ($requests | Where-Object { $_.body.state.'近期行为' -match '划掉 5 次' })) { throw 'No HTTPS request carried the five real dismissals in recent behavior.' }
     Run-Adb -Arguments @('pull', '/sdcard/Android/data/com.example.notificationdemo.filter/files/attention-proof.png', (Join-Path $StateDirectory 'attention-proof.png'))
     Run-Adb -Arguments @('pull', '/sdcard/Android/data/com.example.notificationdemo.filter/files/comparison-proof.png', (Join-Path $StateDirectory 'comparison-proof.png'))
-    "PASS: local HTTPS fixture validated $($requests.Count) requests across three routes; only synthetic data used. Evidence: $StateDirectory"
+    "PASS: local HTTPS fixture validated $($requests.Count) requests across three comparison routes and all four 1052 model choices; only synthetic data used. Evidence: $StateDirectory"
 } finally {
     if ($null -ne $forwardedPort) { & $adbBinary -s $Device reverse --remove "tcp:$forwardedPort" | Out-Null }
     if ($null -ne $server -and -not $server.HasExited) { Stop-Process -Id $server.Id }
