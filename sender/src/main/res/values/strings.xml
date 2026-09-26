@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="active_sample_summary">本发送器仍在通知栏中的样本：%1$d 张\nID：%2$s</string>
+</resources>

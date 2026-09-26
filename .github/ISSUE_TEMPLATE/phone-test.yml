@@ -1,0 +1,209 @@
+name: 手机实测反馈
+description: 记录两个通知 Demo APK 在实体 Android 手机上的测试结果。
+title: "[手机实测] 品牌型号 / Android 版本"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请按仓库 docs/PHONE_TESTING.md 操作。未进行的项目填“未测试”，遇到阻断请保留实际提示。
+        仅提交合成测试样本；请勿上传真实通知正文、联系人、群名、手机号、验证码、Token 或密码。截图上传前裁剪或遮盖私人信息，私有仓库同样适用。
+  - type: input
+    id: release
+    attributes:
+      label: Release 标签与两个 App 版本
+      description: 填写下载时的 Release 标签，以及筛选器、发送器版本；请勿填写猜测值。
+      placeholder: "Release：…；通知筛选 Demo：…；通知测试发送器：…"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 手机品牌与完整型号
+      placeholder: "品牌 / 型号（设置 → 关于手机中可查看）"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Android 与厂商系统版本
+      placeholder: "Android …；厂商系统名及版本 …"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: APK 安装结果
+      options:
+        - 两个 APK 均安装成功
+        - 只有筛选器安装成功
+        - 只有发送器安装成功
+        - 两个 APK 均安装失败
+        - 未测试
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: 安装与权限情况
+      description: 记录通知使用权是否获准、筛选器是否已连接、发送器是否允许通知，以及受限设置或安装拦截的原文。不要附带账户信息。
+      placeholder: |
+        筛选器通知使用权：
+        筛选器监听状态：
+        发送器通知权限及渠道：
+        是否遇到受限设置 / 安装拦截：
+        处理方法（如未解决也请写明）：
+    validations:
+      required: true
+  - type: textarea
+    id: rules
+    attributes:
+      label: 本次使用的规则
+      description: 填已保存的规则；只测合成样本时，目标可以仅为测试发送器。
+      value: |
+        目标 App 包名：
+        保留关键词：紧急,会议,重要,家人
+        清除关键词：热搜,推荐,优惠,广告
+    validations:
+      required: true
+  - type: dropdown
+    id: observation
+    attributes:
+      label: 观察模式 · 9 张验收样本
+      description: 预期保留 101、102、103、104、105、200、201、202、203；两张广告只出现建议清除。
+      options:
+        - 通过（9 个 ID 全保留，广告仅建议清除）
+        - 失败（当前 ID 或决策不符）
+        - 未测试
+        - 被安装或权限问题阻断
+    validations:
+      required: true
+  - type: input
+    id: observation_ids
+    attributes:
+      label: 观察模式下的实际 ID 列表
+      description: 在发送器点击“刷新当前通知”后抄录；不要按通知栏折叠行数计数。没测试可留空。
+      placeholder: "[101, 102, 103, 104, 105, 200, 201, 202, 203]"
+  - type: dropdown
+    id: automatic
+    attributes:
+      label: 自动模式 · 9 张验收样本
+      description: 预期只移除 102、202，保留 101、103、104、105、200、201、203。
+      options:
+        - 通过（102 / 202 移除，预期 7 个 ID 保留）
+        - 失败（多清除、少清除或其他结果不符）
+        - 未测试
+        - 被安装或权限问题阻断
+    validations:
+      required: true
+  - type: input
+    id: automatic_ids
+    attributes:
+      label: 自动模式下的实际 ID 列表
+      description: 发送后等待约 5 秒，再点击发送器“刷新当前通知”抄录。
+      placeholder: "[101, 103, 104, 105, 200, 201, 203]"
+  - type: dropdown
+    id: removal_confirmation
+    attributes:
+      label: 两张广告的系统清除确认
+      description: “请求清除”不等于成功，请核对筛选器日志。
+      options:
+        - 两张均有“已清除”记录
+        - 只有一张有“已清除”记录
+        - 仅看到“请求清除”或“未确认”
+        - 没有相关清除记录
+        - 未测试
+    validations:
+      required: true
+  - type: dropdown
+    id: background
+    attributes:
+      label: 普通后台
+      description: 按 Home 离开筛选器，直接打开发送器重发样本；先核对 ID，再返回筛选器。
+      options:
+        - 通过
+        - 失败或需要手动恢复
+        - 未测试
+    validations:
+      required: true
+  - type: dropdown
+    id: screenoff_resume
+    attributes:
+      label: 熄屏放置后恢复
+      description: 锁屏放置 5–10 分钟；解锁后先打开发送器重做验收，不先打开筛选器。
+      options:
+        - 通过
+        - 失败或需要手动恢复
+        - 未测试
+    validations:
+      required: true
+  - type: dropdown
+    id: locked_reading
+    attributes:
+      label: 熄屏期间读取合成消息
+      description: 默认不清除微信；这里只验证另一台设备在锁屏期间发来的合成微信消息是否被记录。未实际收到消息请选择未测试。
+      options:
+        - 有记录，内容可读
+        - 有记录，内容部分可读或隐藏
+        - 没有记录
+        - 未测试
+    validations:
+      required: true
+  - type: dropdown
+    id: reboot
+    attributes:
+      label: 手机重启并解锁后
+      description: 先打开发送器重发样本，再检查筛选器连接和开关状态。
+      options:
+        - 通过（无需先手动打开筛选器）
+        - 需手动打开筛选器后才恢复
+        - 需重新授权或其他操作才恢复
+        - 仍失败
+        - 未测试
+    validations:
+      required: true
+  - type: textarea
+    id: lifecycle_details
+    attributes:
+      label: 后台、熄屏、重启补充
+      description: 记录各项测试时间、锁屏时长、省电与后台设置，以及修改设置前后的不同结果。
+      placeholder: "测试时间 / 场景 / 等待时长 / 原有设置 / 实际结果 / 恢复操作"
+  - type: textarea
+    id: source_readability
+    attributes:
+      label: 微信 / 微博的通知内容可读性
+      description: 未测试写明即可。只记录版本、通知类型和字段是否可读，不要粘贴真实内容。
+      placeholder: |
+        来源 App 及版本：
+        通知类型（单聊 / 群聊 / 其他）：
+        锁屏 / 解锁；通知预览设置：
+        标题 / 发送人 / 正文：可读、部分可读、隐藏或缺失：
+        独立通知还是合并通知：
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 异常复现步骤与合成样本证据
+      description: 写出操作顺序、预期和实际结果。截图仅展示合成样本并遮盖无关通知；无异常可留空。
+      placeholder: |
+        1. …
+        2. …
+        预期：
+        实际：
+        能否重复出现 / 恢复方法：
+  - type: dropdown
+    id: stopped
+    attributes:
+      label: 测试后停止与权限撤回
+      options:
+        - 已关闭自动清除并撤回通知使用权
+        - 已关闭自动清除，继续保留通知使用权观察
+        - 仍在继续测试
+        - 未能正常关闭或撤回（请在异常中说明）
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 提交内容检查
+      options:
+        - label: 我只提交合成样本或字段可读性结果，已删除或遮盖真实私人通知、验证码与凭据。
+          required: true

@@ -1,0 +1,57 @@
+name: Android build and rule checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Java 17
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Rule checks
+        run: |
+          mkdir -p build/rule-tests
+          javac -encoding UTF-8 -d build/rule-tests filter/src/main/java/com/example/notificationdemo/filter/DecisionEngine.java tests/DecisionEngineTest.java
+          java -cp build/rule-tests DecisionEngineTest
+      - name: Build and Android Lint
+        run: bash ./gradlew --no-daemon :filter:assembleDebug :sender:assembleDebug :filter:assembleDebugAndroidTest :filter:lintDebug :sender:lintDebug
+      - name: Upload development APKs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: development-apks-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            filter/build/outputs/apk/debug/filter-debug.apk
+            sender/build/outputs/apk/debug/sender-debug.apk
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lint-reports-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            filter/build/reports/lint-results-debug.*
+            sender/build/reports/lint-results-debug.*
