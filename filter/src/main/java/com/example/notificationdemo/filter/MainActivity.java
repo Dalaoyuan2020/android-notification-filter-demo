@@ -54,6 +54,7 @@ public final class MainActivity extends Activity {
     private TextView modeDescription;
     private TextView logCount;
     private TextView saveFeedback;
+    private TextView strategySummary;
     private Switch autoSwitch;
     private EditText targets;
     private EditText keepWords;
@@ -108,7 +109,7 @@ public final class MainActivity extends Activity {
                 availableWidth > dp(720) ? dp(720) : -1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         contentFrame.addView(column, columnParams);
 
-        TextView eyebrow = text("ANDROID  /  本机规则验证", 11, TEAL, true);
+        TextView eyebrow = text("ANDROID  /  通知筛选验证", 11, TEAL, true);
         eyebrow.setLetterSpacing(0.09f);
         column.addView(eyebrow);
         addSpace(column, 8);
@@ -119,10 +120,11 @@ public final class MainActivity extends Activity {
 
         makeStatusCard(column);
         makeModeCard(column);
+        makeModelCard(column);
         makeRulesCard(column);
         makeLogsCard(column);
         addSpace(column, 2);
-        TextView privacy = text("本机处理 · 无网络权限\n仅处理通知卡片，不删除原 App 内的消息。", 12, MUTED, false);
+        TextView privacy = text("默认关键词在本机处理 · 模型远程处理需手动开启\n仅处理通知卡片，不删除原 App 内的消息。", 12, MUTED, false);
         privacy.setGravity(Gravity.CENTER);
         column.addView(privacy);
 
@@ -190,6 +192,13 @@ public final class MainActivity extends Activity {
                 new int[]{Color.rgb(144, 203, 190), Color.rgb(185, 197, 206)}));
         autoSwitch.setOnCheckedChangeListener((button, enabled) -> {
             if (updatingSwitch) return;
+            ModelConfig config = ModelStore.load(this);
+            if (enabled && !allowsAutomatic(config)) {
+                DemoStore.setAuto(this, false);
+                refreshState();
+                toast("当前策略仅观察，请先检查模型配置与远程处理开关");
+                return;
+            }
             DemoStore.setAuto(this, enabled);
             refreshState();
         });
@@ -203,16 +212,28 @@ public final class MainActivity extends Activity {
         card.addView(caution);
     }
 
+    private void makeModelCard(LinearLayout parent) {
+        LinearLayout card = card(parent);
+        sectionTitle(card, "03", "判断策略");
+        addSpace(card, 10);
+        strategySummary = text("", 13, MUTED, false);
+        card.addView(strategySummary);
+        addSpace(card, 14);
+        Button settings = button("配置模型与双路对照", false);
+        settings.setOnClickListener(view -> startActivity(new Intent(this, ModelSettingsActivity.class)));
+        card.addView(settings, fullWidth());
+    }
+
     private void makeRulesCard(LinearLayout parent) {
         LinearLayout card = card(parent);
-        sectionTitle(card, "03", "关键词规则");
+        sectionTitle(card, "04", "关键词规则");
         addSpace(card, 6);
         card.addView(text("修改后点击保存，自动清除仅作用于这些 App。", 13, MUTED, false));
         targets = input(card, "目标 App 包名", "com.sina.weibo,com.example.notificationdemo.sender", 2, false);
         card.addView(text("默认包含微博和测试发送器；微信不在处理范围内。", 12, MUTED, false));
         keepWords = input(card, "保留关键词 · 优先匹配", "紧急,会议,重要,家人", 2, true);
         blockWords = input(card, "清除关键词", "热搜,推荐,优惠,广告", 2, true);
-        card.addView(text("多个值用逗号或换行分隔。标题和正文包含任一关键词即命中；保留优先，未命中默认保留，持续通知跳过。", 12, MUTED, false));
+        card.addView(text("多个值用逗号或换行分隔。保留词始终优先，持续通知跳过。清除词仅用于关键词策略；模型策略使用模型判断。关键词未命中默认保留。", 12, MUTED, false));
         addSpace(card, 14);
         Button save = button("保存规则", true);
         save.setOnClickListener(view -> {
@@ -249,7 +270,7 @@ public final class MainActivity extends Activity {
     private void makeLogsCard(LinearLayout parent) {
         LinearLayout card = card(parent);
         LinearLayout heading = row();
-        heading.addView(text("04  验证记录", 17, INK, true),
+        heading.addView(text("05  验证记录", 17, INK, true),
                 new LinearLayout.LayoutParams(0, -2, 1));
         Button clear = button("清空", false);
         clear.setTextSize(12);
@@ -276,18 +297,45 @@ public final class MainActivity extends Activity {
         boolean granted = hasNotificationAccess();
         boolean connected = FilterService.isConnected();
         boolean automatic = DemoStore.getAuto(this);
+        ModelConfig modelConfig = ModelStore.load(this);
+        boolean comparison = modelConfig.mode == ModelConfig.Mode.COMPARE;
         setStatus(permissionValue, granted ? "已授权" : "待开启", granted);
         setStatus(connectionValue, connected ? "已连接" : granted ? "等待连接" : "未连接", connected);
-        modeValue.setText(automatic ? "自动模式" : "观察模式");
+        modeValue.setText(comparison ? "对照观察" : automatic ? "自动模式" : "观察模式");
         modeValue.setTextColor(automatic ? AMBER : TEAL);
         modeValue.setBackground(background(automatic ? SOFT_AMBER : SOFT_TEAL, 30, 0));
-        modeDescription.setText(automatic
+        modeDescription.setText(comparison
+                ? "双路对照只记录两路判断，绝不发起清除。切换策略并保存后，需重新手动开启自动清除。"
+                : !allowsAutomatic(modelConfig)
+                ? "当前模型策略尚未开启远程处理，或配置存储不可用；自动清除暂不可用。"
+                : automatic
                 ? "已开启：命中清除规则后请求系统移除通知，并记录结果。"
                 : "默认仅观察：展示保留或清除建议，不移除通知。先确认规则，再开启自动清除。" );
         updatingSwitch = true;
         autoSwitch.setChecked(automatic);
+        autoSwitch.setEnabled(allowsAutomatic(modelConfig));
         updatingSwitch = false;
+        String route = modelConfig.mode == ModelConfig.Mode.KEYWORDS ? "关键词 · 本机规则"
+                : modelConfig.mode == ModelConfig.Mode.OFFICIAL ? "官方模型 · " + profileLabel(modelConfig.official)
+                : modelConfig.mode == ModelConfig.Mode.RELAY ? "中转模型 · " + profileLabel(modelConfig.relay)
+                : "双路对照 · 只观察，不清除";
+        String remote = modelConfig.mode == ModelConfig.Mode.KEYWORDS
+                ? "当前在本机处理通知，不调用远程模型。"
+                : modelConfig.remoteEnabled
+                ? "远程处理已开启：目标通知的包名、标题、正文和类别可发送到您配置的服务。"
+                : "远程处理已关闭：保留通知，不发送；不回退执行关键词清除。";
+        strategySummary.setText(route + "\n" + remote
+                + (modelConfig.storageError.isEmpty() ? "" : "\n密钥存储不可用，请进入配置页检查。"));
         renderLogs();
+    }
+
+    private static boolean allowsAutomatic(ModelConfig config) {
+        return config.mode == ModelConfig.Mode.KEYWORDS || (config.mode != ModelConfig.Mode.COMPARE
+                && config.storageError.isEmpty() && config.remoteEnabled);
+    }
+
+    private static String profileLabel(ModelConfig.Profile profile) {
+        return profile.label.isEmpty() ? "未命名配置" : profile.label;
     }
 
     private void renderLogs() {

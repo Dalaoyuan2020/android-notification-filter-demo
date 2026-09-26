@@ -64,6 +64,19 @@ public final class DecisionEngine {
     }
 
     public static Result decide(Input input, Rules rules) {
+        Result protection = protect(input, rules);
+        if (protection != null) return protection;
+        String content = (input.title + "\n" + input.text).trim().toLowerCase(Locale.ROOT);
+        for (String word : rules.blockWords) {
+            if (content.contains(word)) {
+                return new Result(Action.REMOVE, "命中清除词「" + word + "」");
+            }
+        }
+        return keep("未命中清除词，默认保留");
+    }
+
+    /** Shared protections run before either keywords or a remote model. Null means eligible. */
+    public static Result protect(Input input, Rules rules) {
         if (input == null || rules == null) return keep("规则或通知数据缺失，默认保留");
         if (!rules.targets.contains(input.packageName.toLowerCase(Locale.ROOT))) {
             return skip("来源不在目标包名列表内");
@@ -79,12 +92,7 @@ public final class DecisionEngine {
         for (String word : rules.keepWords) {
             if (content.contains(word)) return keep("命中保留词「" + word + "」，保留规则优先");
         }
-        for (String word : rules.blockWords) {
-            if (content.contains(word)) {
-                return new Result(Action.REMOVE, "命中清除词「" + word + "」");
-            }
-        }
-        return keep("未命中清除词，默认保留");
+        return null;
     }
 
     private static Result keep(String reason) { return new Result(Action.KEEP, reason); }

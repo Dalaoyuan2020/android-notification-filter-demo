@@ -1,0 +1,68 @@
+name: 模型对比反馈
+description: 官方、中转站及双路对照的真实手机测试结果（只填写合成样本）
+title: "[模型测试] 机型 / 版本 / 现象"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先完成关键词基线，再按 docs/MODEL_TESTING.md 测试。
+        不要上传 API Key、带密钥的 URL、私人通知、联系人或验证码。未做的项目填“未测试”。
+  - type: input
+    id: environment
+    attributes:
+      label: 手机与应用版本
+      description: 品牌型号、Android / 厂商系统版本、Release 标签
+    validations:
+      required: true
+  - type: dropdown
+    id: strategy
+    attributes:
+      label: 本轮策略
+      options:
+        - 官方模型
+        - 中转模型
+        - 双路对照
+    validations:
+      required: true
+  - type: textarea
+    id: profiles
+    attributes:
+      label: 模型与版本
+      description: 官方及中转各自的配置标签、模型 ID；不要填密钥或内部敏感地址。
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: 测试条件
+      description: 目标包名、保留词是否修改；远程处理开关、自动清除开关；Wi-Fi / 蜂窝；前台 / 后台。
+    validations:
+      required: true
+  - type: textarea
+    id: connection
+    attributes:
+      label: 两路合成连接测试
+      description: 分别填成功 / 失败 / 未配置 / 未测试；记录界面安全错误码及耗时，勿粘贴原始服务响应。
+    validations:
+      required: true
+  - type: textarea
+    id: comparison
+    attributes:
+      label: 同一合成样本的结果
+      description: 样本 ID、官方 KEEP / REMOVE 与耗时、中转 KEEP / REMOVE 与耗时、是否一致、最终活动通知 ID。保护规则跳过的标记“未送模型”。
+    validations:
+      required: true
+  - type: textarea
+    id: failures
+    attributes:
+      label: 异常与恢复
+      description: 断网 / 接口错误时是否保留；变更配置后是否回观察；双路对照是否始终不清除；异常复现步骤。未测填未测试。
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 提交检查
+      options:
+        - label: 内容只含合成样本，截图和附件不含密钥或私人通知。
+          required: true

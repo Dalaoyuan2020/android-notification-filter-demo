@@ -8,7 +8,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** Small, private, device-local demo store. No notification contents leave this app. */
+/** Private device-local log and rule store. Remote transport is separately opt-in. */
 public final class DemoStore {
     public static final String ACTION_CHANGED = "com.example.notificationdemo.filter.CHANGED";
     public static final String DEFAULT_TARGETS = "com.sina.weibo,com.example.notificationdemo.sender";
@@ -24,8 +24,9 @@ public final class DemoStore {
     }
 
     public static boolean getAuto(Context context) { return prefs(context).getBoolean("auto", false); }
-    public static void setAuto(Context context, boolean enabled) {
-        prefs(context).edit().putBoolean("auto", enabled).apply();
+    public static synchronized void setAuto(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean("auto", enabled)
+                .putLong("decision_revision", getDecisionRevision(context) + 1).apply();
         notifyChanged(context);
     }
     public static String getTargets(Context context) {
@@ -41,8 +42,13 @@ public final class DemoStore {
     }
     public static void setBlockWords(Context context, String value) { putString(context, "block", value); }
 
-    private static void putString(Context context, String key, String value) {
-        prefs(context).edit().putString(key, value == null ? "" : value).apply();
+    public static long getDecisionRevision(Context context) {
+        return prefs(context).getLong("decision_revision", 0);
+    }
+
+    private static synchronized void putString(Context context, String key, String value) {
+        prefs(context).edit().putString(key, value == null ? "" : value)
+                .putLong("decision_revision", getDecisionRevision(context) + 1).apply();
         notifyChanged(context);
     }
 

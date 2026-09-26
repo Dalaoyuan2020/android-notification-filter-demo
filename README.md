@@ -1,12 +1,12 @@
 # 通知筛选 Demo
 
-两个独立的原生 Android App，用于验证第三方 App 的通知读取、关键词判断和清除。无网络权限，无模型调用，无外部运行时库。最低 Android 8.0（API 26），当前 compile/target SDK 35。
+两个独立的原生 Android App，用于验证通知读取、判断和清除。v0.2.0 支持关键词、官方模型、中转站模型与双路对照四种策略；默认关键词且不发送网络请求。模型模式需手动配置兼容接口并允许远程判断，无内置 API Key 或默认模型厂商。最低 Android 8.0（API 26），当前 compile/target SDK 35，无第三方运行时依赖。
 
 ## 给手机测试同学
 
 请打开 [APK 下载页](https://github.com/Dalaoyuan2020/android-notification-filter-demo/releases/latest)，下载 `notification-filter-demo.apk` 和 `notification-test-sender.apk`，安装两个 App；不用下载源码，也不用安装 Android Studio。
 
-具体操作和反馈格式见 [真机测试指南](docs/PHONE_TESTING.md)。如果仓库为私有，需先获得仓库访问权限。当前仅通过 Android 15 模拟器验证，不代表所有品牌手机已经实测通过。
+具体操作和反馈格式见 [真机测试指南](docs/PHONE_TESTING.md)；配置模型后再按 [模型对比指南](docs/MODEL_TESTING.md) 测试。协作者 rui460 请先 [接受邀请](https://github.com/Dalaoyuan2020/android-notification-filter-demo/invitations)，代码修改与提交见 [协作开发指南](CONTRIBUTING.md)。当前仅通过 Android 15 模拟器验证，不代表所有品牌手机已经实测通过。
 
 仓库的 Actions 自动编译并运行规则测试、Android Lint。Actions 附件是临时开发构建，每次的调试签名可能不同；给队友安装时统一使用指定 Release 的 APK，避免混用签名导致覆盖安装失败。设备集成测试需另外运行，不能仅凭 Actions 构建通过就认定真机行为通过。
 
@@ -23,6 +23,14 @@
 默认保留词：`紧急,会议,重要,家人`。默认清除词：`热搜,推荐,优惠,广告`。规则顺序：非目标来源跳过 → 持续/不可清除/汇总/通话导航闹钟保护 → 保留词优先 → 清除词命中 → 未命中保留。
 
 自动开关只改变新到通知的处理方式；需要处理已经存在的通知时，点击“重新扫描现有通知”。“清空记录”仅清空本 App 日志，不清理系统通知。
+
+## 两路模型判断
+
+官方和中转站分别保存 Base URL、模型 ID、版本标签及可选 API Key。当前仅实现兼容 Chat Completions 的 HTTPS JSON 接口，不把未确认的 JVE/JEV、1052 或 duorive 名称猜成某个厂商。服务实际地址和协议仍待提供；本仓库的仿真测试不等于这两项真实服务已经接通。
+
+双路对照把同一条符合处理条件的通知依次交给两路接口，记录各自结论、理由、调用耗时与是否一致，始终只观察。单路模式在观察中确认效果后可手动开启自动清除。目标包名、保留关键词、持续通知等保护仍优先；未启用远程、配置/联网/响应失败默认保留，通知更新或配置修改后旧结果作废。保存模型设置会关闭自动清除。
+
+API Key 使用 Android Keystore 加密保存在本机；不提交到仓库或打进 APK。只有启用模型策略且允许远程判断后，才会发送符合条件的通知包名、标题、正文到配置的服务。连接测试仅发送固定合成样本。测试期请只把发送器列为目标。
 
 ## 处理边界
 
@@ -43,7 +51,7 @@
 .\gradlew.bat :filter:assembleDebug :sender:assembleDebug :filter:assembleDebugAndroidTest :filter:lintDebug :sender:lintDebug
 ```
 
-Gradle Wrapper 固定 8.13，Android Gradle Plugin 固定 8.11.1；已固定 Wrapper 分发包 SHA-256。第一次构建需要网络下载构建依赖，但 APK 本身不联网。
+Gradle Wrapper 固定 8.13，Android Gradle Plugin 固定 8.11.1；已固定 Wrapper 分发包 SHA-256。第一次构建需要网络下载构建依赖。过滤器仅在显式启用模型或点击连接测试时联网；发送器不联网。
 
 APK 位于 `filter/build/outputs/apk/debug/` 和 `sender/build/outputs/apk/debug/`。当前交付的是 debug 签名测试包，不是商店发布包。重新编译时若签名不同，覆盖安装需先卸载旧版本（会移除原本地日志和授权）。
 
@@ -67,9 +75,17 @@ adb -s emulator-5554 shell am start -n com.example.notificationdemo.sender/.Main
 
 支持 `clear`, `batch`, `normal`, `ad`, `conflict`, `empty`, `ongoing`, `group`, `update_ad`, `update_urgent`。Release 构建忽略调试场景入口。
 
+模型协议、配置存储及通知竞态测试在专用模拟器运行：
+
+```powershell
+.\tests\run-model-smoke.ps1 -Device emulator-5554
+```
+
+此脚本会清空过滤器的本机配置与日志，仅支持模拟器。测试使用仿真连接和合成结果，不请求真实模型服务。真实官方/中转服务需按模型指南另行测试。
+
 ## 项目结构
 
-- `filter/`：原生界面、通知监听、纯 Java 规则引擎、本地日志。
+- `filter/`：原生界面、通知监听、规则引擎、两个模型配置、HTTPS 协议适配、加密凭据与本地日志。
 - `sender/`：独立的测试通知发送器。
 - `filter/src/androidTest/`：真实跨 App 通知集成测试。
 - `tests/`：纯 Java 规则测试与设备测试脚本。

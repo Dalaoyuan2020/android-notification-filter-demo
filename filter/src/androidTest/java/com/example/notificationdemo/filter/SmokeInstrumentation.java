@@ -35,7 +35,8 @@ import java.util.regex.Pattern;
  * Prerequisites: sender POST_NOTIFICATIONS granted, filter notification access granted.
  * Checks the system's active NotificationRecord list, not historical dump entries.
  */
-public final class SmokeInstrumentation extends Instrumentation {
+public final class SmokeInstrumentation extends ModelInstrumentation {
+    private boolean modelSuite;
     private static final String SENDER = "com.example.notificationdemo.sender";
     private static final Set<Integer> SAMPLE_IDS = ids(101, 102, 103, 104, 105, 200, 201, 202, 203, 301);
     private static final Set<Integer> BATCH_IDS = ids(101, 102, 103, 104, 105, 200, 201, 202, 203);
@@ -49,15 +50,20 @@ public final class SmokeInstrumentation extends Instrumentation {
     private String lastDump = "";
 
     @Override public void onCreate(Bundle arguments) {
+        modelSuite = arguments != null && "models".equals(arguments.getString("suite"));
         super.onCreate(arguments);
-        start();
     }
 
     @Override public void onStart() {
-        super.onStart();
+        if (modelSuite) {
+            super.onStart();
+            return;
+        }
         target = getTargetContext();
         report.append("NotificationFilterDemo Android integration smoke test\n");
         try {
+            ModelConfig.Profile emptyProfile = new ModelConfig.Profile("", "", "", "");
+            ModelStore.save(target, ModelConfig.Mode.KEYWORDS, false, emptyProfile, emptyProfile);
             restoreDefaults();
             getUiAutomation();
             if (!FilterService.isConnected()) {
