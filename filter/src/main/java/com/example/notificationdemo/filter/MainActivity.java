@@ -1,6 +1,7 @@
 package com.example.notificationdemo.filter;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.NotificationManager;
 import android.annotation.SuppressLint;
 import android.content.ActivityNotFoundException;
@@ -9,6 +10,8 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -18,6 +21,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
@@ -52,6 +56,13 @@ public final class MainActivity extends Activity {
     private home_page_view homePage;
     private messages_page_view messagesPage;
     private judge_page_view judgePage;
+    private my_page_view myPage;
+    private LinearLayout permissionsPanel;
+    private LinearLayout rulesPanel;
+    private AlertDialog detailsDialog;
+    private ScrollView detailScroll;
+    private String openedDetail = "";
+    private String appVersion = "";
 
     private TextView permissionValue;
     private TextView connectionValue;
@@ -62,7 +73,6 @@ public final class MainActivity extends Activity {
     private EditText blockWords;
     private boolean receiverRegistered;
     private boolean updatingSwitch;
-    private int sectionIndex;
     private final BroadcastReceiver changes = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             refreshState();
@@ -71,6 +81,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        appVersion = readAppVersion();
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(BACKGROUND);
         getWindow().getDecorView().setSystemUiVisibility(
@@ -122,6 +133,13 @@ public final class MainActivity extends Activity {
         refreshState();
         int restoredPage = savedInstanceState == null ? PAGE_HOME : savedInstanceState.getInt("selected_page", PAGE_HOME);
         switchPage(restoredPage, false);
+        if (savedInstanceState != null) {
+            String detail = savedInstanceState.getString("opened_detail", "");
+            int detailPosition = Math.max(0, savedInstanceState.getInt("detail_scroll", 0));
+            if (!detail.isEmpty()) {
+                root.post(() -> showProfileDetail(detail, detailPosition));
+            }
+        }
     }
 
     private void buildHomePage() {
@@ -130,7 +148,7 @@ public final class MainActivity extends Activity {
         homePage = new home_page_view(this);
         homePage.setServiceAction(view -> {
             switchPage(PAGE_PROFILE, true);
-            pages[PAGE_PROFILE].post(() -> pages[PAGE_PROFILE].scrollTo(0, 0));
+            showProfileDetail(my_page_view.PERMISSIONS, 0);
         });
         homePage.setFolderAction((folder, filter) -> openMessages(filter));
         content.addView(homePage, fullWidth());
@@ -170,10 +188,161 @@ public final class MainActivity extends Activity {
     }
 
     private void buildProfilePage() {
-        LinearLayout content = buildPage(PAGE_PROFILE, "我的", "管理通知权限、处理范围与关键词规则。");
-        makeStatusCard(content);
-        makeRulesCard(content);
-        addPrivacyNote(content);
+        LinearLayout content = buildPage(PAGE_PROFILE, "", "");
+        myPage = new my_page_view(this);
+        myPage.setOnEntrySelectedListener(entry -> showProfileDetail(entry, 0));
+        content.addView(myPage, fullWidth());
+        // Retain the same form instances even when their dialogs are closed. Refreshes
+        // only update status values; unsaved rule text stays here until the user saves.
+        permissionsPanel = column();
+        makeStatusCard(permissionsPanel);
+        rulesPanel = column();
+        makeRulesCard(rulesPanel);
+        addPrivacyNote(rulesPanel);
+    }
+
+    private void showProfileDetail(String entry, int scrollPosition) {
+        if (isFinishing() || isDestroyed()) return;
+        String title;
+        LinearLayout panel;
+        switch (entry) {
+            case my_page_view.PERMISSIONS:
+                title = "通知权限";
+                panel = permissionsPanel;
+                break;
+            case my_page_view.RULES:
+                title = "筛选规则";
+                panel = rulesPanel;
+                break;
+            case my_page_view.AUTOMATIC:
+                title = "自动清除";
+                panel = judgePage.getHandlingPanel();
+                break;
+            case my_page_view.ADVANCED:
+                title = "高级设置";
+                panel = makeAdvancedPanel();
+                break;
+            case my_page_view.GUIDE:
+                title = "使用引导";
+                panel = makeGuidePanel();
+                break;
+            case my_page_view.ABOUT:
+                title = "关于 Attention";
+                panel = makeAboutPanel();
+                break;
+            default:
+                return;
+        }
+        if (detailsDialog != null) {
+            hideDetailKeyboard();
+            detailsDialog.dismiss();
+        }
+        if (panel.getParent() instanceof ViewGroup) {
+            ((ViewGroup) panel.getParent()).removeView(panel);
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.setPadding(dp(16), dp(6), dp(16), dp(16));
+        scroll.setBackground(ui_theme.paper(this));
+        scroll.setFocusableInTouchMode(true);
+        scroll.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
+        scroll.addView(panel, new ScrollView.LayoutParams(-1, -2));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(scroll)
+                .setNegativeButton("关闭", (window, which) -> hideDetailKeyboard())
+                .create();
+        detailsDialog = dialog;
+        detailScroll = scroll;
+        openedDetail = entry;
+        dialog.setOnCancelListener(window -> hideDetailKeyboard());
+        dialog.setOnDismissListener(window -> {
+            scroll.clearFocus();
+            scroll.removeView(panel);
+            if (detailsDialog == dialog) {
+                detailsDialog = null;
+                detailScroll = null;
+                openedDetail = "";
+            }
+        });
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                    | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+        }
+        scroll.requestFocus();
+        scroll.post(() -> scroll.scrollTo(0, scrollPosition));
+    }
+
+    private void hideDetailKeyboard() {
+        if (detailScroll == null) return;
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (keyboard != null) {
+            keyboard.hideSoftInputFromWindow(detailScroll.getWindowToken(), 0);
+        }
+        detailScroll.clearFocus();
+    }
+
+    private LinearLayout makeAdvancedPanel() {
+        LinearLayout panel = column();
+        panel.addView(text("管理模型接口、三路对照和阈值，或调整本机短时记忆与独立事件上传。", 14, MUTED, false));
+        addSpace(panel, 16);
+        Button models = button("模型配置与连接测试", false);
+        models.setOnClickListener(view -> startActivity(new Intent(this, ModelSettingsActivity.class)));
+        panel.addView(models, fullWidth());
+        addSpace(panel, 10);
+        Button attention = button("Attention · 行为与上传设置", false);
+        attention.setOnClickListener(view -> startActivity(new Intent(this, AttentionActivity.class)));
+        panel.addView(attention, fullWidth());
+        addSpace(panel, 16);
+        panel.addView(text("远程模型请求与独立事件上传分别控制；保存模型或注意力配置后，自动清除会关闭。", 12, MUTED, false));
+        return panel;
+    }
+
+    private LinearLayout makeGuidePanel() {
+        LinearLayout panel = column();
+        guideStep(panel, "1  开启通知使用权", "在“通知权限”中进入系统设置授权，返回后确认监听服务已连接。");
+        guideStep(panel, "2  保存处理范围", "在“筛选规则”中填写目标 App 包名和关键词。保留词优先；关键词未命中时保留。微信默认不在处理范围。");
+        guideStep(panel, "3  用合成通知观察", "打开测试发送器，发送样本，再到“消息”查看保留或清除建议。默认观察模式不会移除通知。");
+        guideStep(panel, "4  再决定自动清除", "确认规则后，在“我的 → 自动清除”手动开启。对照模式只观察；清除的是通知卡片，不删除 App 内消息，也不能保证恢复。");
+        guideStep(panel, "5  按需使用模型", "在“智能判断”中配置服务并用合成样本测试。远程通知判断需手动开启；Attention 可查看本机短时记忆与单独的上传设置。");
+        Button permission = button("打开通知权限", false);
+        permission.setOnClickListener(view -> showProfileDetail(my_page_view.PERMISSIONS, 0));
+        panel.addView(permission, fullWidth());
+        addSpace(panel, 8);
+        Button sender = button("打开测试发送器", false);
+        sender.setOnClickListener(view -> openSender());
+        panel.addView(sender, fullWidth());
+        return panel;
+    }
+
+    private void guideStep(LinearLayout panel, String title, String body) {
+        panel.addView(text(title, 16, INK, true));
+        addSpace(panel, 7);
+        panel.addView(text(body, 13, MUTED, false));
+        addSpace(panel, 18);
+    }
+
+    private LinearLayout makeAboutPanel() {
+        LinearLayout panel = column();
+        panel.addView(text("Attention", 26, INK, true));
+        addSpace(panel, 8);
+        panel.addView(text(appVersion.isEmpty() ? "通知筛选 Demo" : "通知筛选 Demo · v" + appVersion, 13, MUTED, false));
+        addSpace(panel, 20);
+        panel.addView(text("本地优先的消息辅助工具。利用系统通知使用权读取通知，并按已保存的规则记录建议或请求清除。", 14, MUTED, false));
+        addSpace(panel, 16);
+        addPrivacyNote(panel);
+        addSpace(panel, 16);
+        panel.addView(text("远程模型与独立事件上传分别由你开启。服务凭据由 Android Keystore 加密保存；需要停止处理时，可关闭自动清除、远程请求与上传，或在系统设置中撤回通知使用权。", 13, MUTED, false));
+        return panel;
+    }
+
+    private String readAppVersion() {
+        try {
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return info.versionName == null ? "" : info.versionName;
+        } catch (PackageManager.NameNotFoundException unavailable) {
+            return "";
+        }
     }
 
     private LinearLayout buildPage(int index, String title, String description) {
@@ -325,7 +494,7 @@ public final class MainActivity extends Activity {
 
     private void makeStatusCard(LinearLayout parent) {
         LinearLayout card = card(parent);
-        sectionTitle(card, "01", "连接通知中心");
+        sectionTitle(card, "连接通知中心");
         addSpace(card, 18);
         permissionValue = statusRow(card, "通知使用权");
         addSpace(card, 11);
@@ -355,7 +524,7 @@ public final class MainActivity extends Activity {
 
     private void makeRulesCard(LinearLayout parent) {
         LinearLayout card = card(parent);
-        sectionTitle(card, "04", "关键词规则");
+        sectionTitle(card, "关键词规则");
         addSpace(card, 6);
         card.addView(text("修改后点击保存，自动清除仅作用于这些 App。", 13, MUTED, false));
         targets = input(card, "目标 App 包名", "com.sina.weibo,com.example.notificationdemo.sender", 2, false);
@@ -381,7 +550,7 @@ public final class MainActivity extends Activity {
             keepWords.setText(keepValue);
             blockWords.setText(blockValue);
             saveFeedback.setText(targetValue.isEmpty() ? "已保存 · 目标为空，所有通知保留"
-                    : blockValue.isEmpty() ? "已保存 · 清除词为空，所有通知保留"
+                    : blockValue.isEmpty() ? "已保存 · 清除词为空，关键词策略默认保留"
                     : "已保存 · 下次通知和手动扫描使用新规则");
             saveFeedback.setVisibility(View.VISIBLE);
             InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
@@ -409,6 +578,8 @@ public final class MainActivity extends Activity {
         updatingSwitch = true;
         judgePage.update(modelConfig, attention, automatic && allowed, allowed);
         updatingSwitch = false;
+        myPage.update(granted, connected, automatic && allowed, modelConfig.mode == ModelConfig.Mode.COMPARE,
+                DecisionEngine.parseList(DemoStore.getTargets(this)).size(), appVersion);
         JSONArray entries = DemoStore.getLogs(this);
         long now = System.currentTimeMillis();
         homePage.update(granted, connected, notification_ui_data.snapshot(entries, now), now);
@@ -491,6 +662,8 @@ public final class MainActivity extends Activity {
         outState.putString("blockWords", blockWords.getText().toString());
         outState.putInt("selected_page", selectedPage < 0 ? PAGE_HOME : selectedPage);
         outState.putString("message_filter", messageFilter);
+        outState.putString("opened_detail", openedDetail);
+        outState.putInt("detail_scroll", detailScroll == null ? 0 : detailScroll.getScrollY());
         int[] currentScroll = scrollPositions.clone();
         for (int i = 0; i < pages.length; i++) {
             if (pages[i] != null && !restoreScroll[i]) {
@@ -499,6 +672,14 @@ public final class MainActivity extends Activity {
         }
         outState.putIntArray("page_scroll_positions", currentScroll);
         super.onSaveInstanceState(outState);
+    }
+
+    @Override protected void onDestroy() {
+        if (detailsDialog != null) {
+            hideDetailKeyboard();
+            detailsDialog.dismiss();
+        }
+        super.onDestroy();
     }
 
     private EditText input(LinearLayout parent, String label, String hint, int lines, boolean words) {
@@ -540,17 +721,15 @@ public final class MainActivity extends Activity {
 
     private LinearLayout card(LinearLayout parent) {
         LinearLayout card = column();
-        int index = sectionIndex++;
-        ui_theme.section(card, index == 0 ? ui_theme.SOFT_BLUE
-                : index == 2 ? ui_theme.SOFT_GREEN : Color.TRANSPARENT);
+        ui_theme.section(card, ui_theme.SHEET);
         LinearLayout.LayoutParams params = fullWidth();
         params.bottomMargin = dp(ui_theme.SECTION_GAP);
         parent.addView(card, params);
         return card;
     }
 
-    private void sectionTitle(LinearLayout parent, String number, String title) {
-        parent.addView(text(number + "  " + title, ui_theme.SECTION_SP, INK, true));
+    private void sectionTitle(LinearLayout parent, String title) {
+        parent.addView(text(title, ui_theme.SECTION_SP, INK, true));
     }
 
     private Button button(String label, boolean primary) {

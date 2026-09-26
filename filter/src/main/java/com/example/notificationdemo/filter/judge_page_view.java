@@ -19,6 +19,7 @@ public final class judge_page_view extends LinearLayout {
     private final TextView modeDescription;
     private final TextView sharingSummary;
     private final Switch automatic;
+    private final LinearLayout handlingPanel;
     private Boolean wideLayout;
 
     public judge_page_view(Context context) {
@@ -62,10 +63,10 @@ public final class judge_page_view extends LinearLayout {
         addView(sharingSummary, sharingPosition);
 
         LinearLayout handling = new LinearLayout(context);
+        handlingPanel = handling;
         handling.setOrientation(VERTICAL);
         handling.setPadding(dp(16), dp(14), dp(16), dp(16));
         handling.setBackground(ui_theme.shape(context, ui_theme.SHEET, 12, ui_theme.BORDER));
-        addView(handling, fullWidth());
         LinearLayout handlingHeader = new LinearLayout(context);
         handlingHeader.setGravity(Gravity.CENTER_VERTICAL);
         handlingHeader.addView(text("通知处理", 17, ui_theme.INK, true), new LayoutParams(0, -2, 1));
@@ -101,6 +102,9 @@ public final class judge_page_view extends LinearLayout {
     }
 
     public Switch getAutoSwitch() { return automatic; }
+
+    /** Mounted by the host under My > Automatic clearing; never appears on the judgment desk. */
+    public LinearLayout getHandlingPanel() { return handlingPanel; }
 
     /** Bind existing preferences only; this method never starts a request or changes a setting. */
     public void update(ModelConfig config, AttentionStore.Config attention, boolean auto, boolean allowsAutomatic) {
