@@ -10,7 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
@@ -40,14 +39,14 @@ import java.util.Locale;
 
 /** Small, dependency-free UI for testing the system notification listener. */
 public final class MainActivity extends Activity {
-    private static final int INK = Color.rgb(24, 45, 67);
-    private static final int MUTED = Color.rgb(97, 113, 129);
-    private static final int TEAL = Color.rgb(0, 115, 114);
-    private static final int BACKGROUND = Color.rgb(244, 247, 250);
-    private static final int BORDER = Color.rgb(223, 231, 237);
-    private static final int SOFT_TEAL = Color.rgb(230, 246, 241);
-    private static final int AMBER = Color.rgb(150, 89, 15);
-    private static final int SOFT_AMBER = Color.rgb(255, 246, 226);
+    private static final int INK = ui_theme.INK;
+    private static final int MUTED = ui_theme.MUTED;
+    private static final int TEAL = ui_theme.ACCENT;
+    private static final int BACKGROUND = ui_theme.PAPER;
+    private static final int BORDER = ui_theme.BORDER;
+    private static final int SOFT_TEAL = ui_theme.SOFT_GREEN;
+    private static final int AMBER = ui_theme.WARNING;
+    private static final int SOFT_AMBER = ui_theme.SOFT_YELLOW;
     private static final int MAX_VISIBLE_LOGS = 80;
 
     private TextView permissionValue;
@@ -64,6 +63,7 @@ public final class MainActivity extends Activity {
     private LinearLayout logList;
     private boolean receiverRegistered;
     private boolean updatingSwitch;
+    private int sectionIndex;
     private final SimpleDateFormat timeFormat = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA);
     private final BroadcastReceiver changes = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -83,7 +83,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BACKGROUND);
+        root.setBackground(ui_theme.paper(this));
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets edge = insets.getInsets(
@@ -105,7 +105,8 @@ public final class MainActivity extends Activity {
         FrameLayout contentFrame = new FrameLayout(this);
         scroll.addView(contentFrame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout column = column();
-        column.setPadding(dp(20), dp(26), dp(20), dp(28));
+        column.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
+                dp(ui_theme.PAGE_MARGIN), dp(32));
         int availableWidth = getResources().getDisplayMetrics().widthPixels;
         FrameLayout.LayoutParams columnParams = new FrameLayout.LayoutParams(
                 availableWidth > dp(720) ? dp(720) : -1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
@@ -115,7 +116,7 @@ public final class MainActivity extends Activity {
         eyebrow.setLetterSpacing(0.09f);
         column.addView(eyebrow);
         addSpace(column, 8);
-        column.addView(text("通知筛选", 32, INK, true));
+        column.addView(text("通知筛选", ui_theme.TITLE_SP, INK, true));
         addSpace(column, 7);
         column.addView(text("留下重要消息，让通知栏清爽一点。", 14, MUTED, false));
         addSpace(column, 24);
@@ -127,7 +128,7 @@ public final class MainActivity extends Activity {
         makeLogsCard(column);
         addSpace(column, 2);
         TextView privacy = text("默认关键词在本机处理 · 模型远程处理需手动开启\n仅处理通知卡片，不删除原 App 内的消息。", 12, MUTED, false);
-        privacy.setGravity(Gravity.CENTER);
+        privacy.setGravity(Gravity.START);
         column.addView(privacy);
 
         targets.setText(savedInstanceState == null ? DemoStore.getTargets(this)
@@ -174,7 +175,7 @@ public final class MainActivity extends Activity {
     private void makeModeCard(LinearLayout parent) {
         LinearLayout card = card(parent);
         LinearLayout heading = row();
-        TextView title = text("02  处理方式", 17, INK, true);
+        TextView title = text("02  处理方式", ui_theme.SECTION_SP, INK, true);
         heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         modeValue = chip("观察模式", TEAL, SOFT_TEAL);
         heading.addView(modeValue);
@@ -187,11 +188,7 @@ public final class MainActivity extends Activity {
         autoSwitch.setPadding(0, dp(8), 0, dp(8));
         autoSwitch.setMinHeight(dp(52));
         autoSwitch.setShowText(false);
-        autoSwitch.setThumbTintList(new android.content.res.ColorStateList(
-                new int[][]{{android.R.attr.state_checked}, {}}, new int[]{TEAL, Color.WHITE}));
-        autoSwitch.setTrackTintList(new android.content.res.ColorStateList(
-                new int[][]{{android.R.attr.state_checked}, {}},
-                new int[]{Color.rgb(144, 203, 190), Color.rgb(185, 197, 206)}));
+        ui_theme.toggle(autoSwitch);
         autoSwitch.setOnCheckedChangeListener((button, enabled) -> {
             if (updatingSwitch) return;
             ModelConfig config = ModelStore.load(this);
@@ -276,7 +273,7 @@ public final class MainActivity extends Activity {
     private void makeLogsCard(LinearLayout parent) {
         LinearLayout card = card(parent);
         LinearLayout heading = row();
-        heading.addView(text("05  验证记录", 17, INK, true),
+        heading.addView(text("05  验证记录", ui_theme.SECTION_SP, INK, true),
                 new LinearLayout.LayoutParams(0, -2, 1));
         Button clear = button("清空", false);
         clear.setTextSize(12);
@@ -428,7 +425,7 @@ public final class MainActivity extends Activity {
             if (model == null) continue;
             LinearLayout box = column();
             box.setPadding(dp(12), dp(12), dp(12), dp(12));
-            box.setBackground(background(Color.WHITE, 10, BORDER));
+            box.setBackground(background(ui_theme.SHEET, 10, BORDER));
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(218), -2);
             size.setMarginEnd(dp(8));
             columns.addView(box, size);
@@ -475,7 +472,7 @@ public final class MainActivity extends Activity {
             }
             LinearLayout box = column();
             box.setPadding(dp(6), dp(9), dp(6), dp(9));
-            box.setBackground(background(Color.WHITE, 8, BORDER));
+            box.setBackground(background(ui_theme.SHEET, 8, BORDER));
             LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -2, 1);
             if (i < count - 1) {
                 size.setMarginEnd(dp(4));
@@ -596,7 +593,7 @@ public final class MainActivity extends Activity {
         addSpace(parent, 7);
         EditText field = new EditText(this);
         field.setTextColor(INK);
-        field.setHintTextColor(Color.rgb(133, 147, 158));
+        field.setHintTextColor(MUTED);
         field.setTextSize(14);
         field.setHint(hint);
         field.setContentDescription(label);
@@ -605,8 +602,7 @@ public final class MainActivity extends Activity {
         field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
                 | (words ? 0 : InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
         field.setGravity(Gravity.TOP | Gravity.START);
-        field.setPadding(dp(12), dp(12), dp(12), dp(12));
-        field.setBackground(background(BACKGROUND, 10, BORDER));
+        ui_theme.input(field);
         field.setSelectAllOnFocus(false);
         field.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         parent.addView(field, fullWidth());
@@ -630,16 +626,17 @@ public final class MainActivity extends Activity {
 
     private LinearLayout card(LinearLayout parent) {
         LinearLayout card = column();
-        card.setPadding(dp(18), dp(18), dp(18), dp(18));
-        card.setBackground(background(Color.WHITE, 18, BORDER));
+        int index = sectionIndex++;
+        ui_theme.section(card, index == 0 ? ui_theme.SOFT_BLUE
+                : index == 2 ? ui_theme.SOFT_GREEN : Color.TRANSPARENT);
         LinearLayout.LayoutParams params = fullWidth();
-        params.bottomMargin = dp(16);
+        params.bottomMargin = dp(ui_theme.SECTION_GAP);
         parent.addView(card, params);
         return card;
     }
 
     private void sectionTitle(LinearLayout parent, String number, String title) {
-        parent.addView(text(number + "  " + title, 17, INK, true));
+        parent.addView(text(number + "  " + title, ui_theme.SECTION_SP, INK, true));
     }
 
     private TextView chip(String label, int foreground, int fill) {
@@ -652,28 +649,12 @@ public final class MainActivity extends Activity {
     private Button button(String label, boolean primary) {
         Button view = new Button(this);
         view.setText(label);
-        view.setAllCaps(false);
-        view.setTextSize(14);
-        view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        view.setTextColor(primary ? Color.WHITE : TEAL);
-        view.setBackground(background(primary ? TEAL : SOFT_TEAL, 11, 0));
-        view.setBackgroundTintList(null);
-        view.setPadding(dp(14), dp(12), dp(14), dp(12));
-        view.setMinHeight(dp(48));
-        view.setMinimumHeight(dp(48));
-        view.setStateListAnimator(null);
+        ui_theme.button(view, primary);
         return view;
     }
 
     private TextView text(String value, float size, int color, boolean bold) {
-        TextView view = new TextView(this);
-        view.setText(value);
-        view.setTextSize(size);
-        view.setTextColor(color);
-        view.setIncludeFontPadding(false);
-        view.setLineSpacing(dp(3), 1f);
-        if (bold) view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        return view;
+        return ui_theme.text(this, value, size, color, bold);
     }
 
     private LinearLayout column() {
@@ -690,11 +671,7 @@ public final class MainActivity extends Activity {
     }
 
     private GradientDrawable background(int fill, int radius, int stroke) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(fill);
-        drawable.setCornerRadius(dp(radius));
-        if (stroke != 0) drawable.setStroke(dp(1), stroke);
-        return drawable;
+        return ui_theme.shape(this, fill, radius, stroke);
     }
 
     private void addSpace(LinearLayout parent, int height) {

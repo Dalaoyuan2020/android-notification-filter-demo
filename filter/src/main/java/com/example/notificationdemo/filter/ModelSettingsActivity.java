@@ -2,7 +2,6 @@ package com.example.notificationdemo.filter;
 
 import android.app.Activity;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
@@ -40,14 +39,14 @@ import java.util.concurrent.Future;
 
 /** Optional, explicit model configuration. Credentials never enter saved instance state. */
 public final class ModelSettingsActivity extends Activity {
-    private static final int INK = 0xFF182D43;
-    private static final int MUTED = 0xFF617181;
-    private static final int TEAL = 0xFF007372;
-    private static final int BACKGROUND = 0xFFF4F7FA;
-    private static final int BORDER = 0xFFDFE7ED;
-    private static final int SOFT_TEAL = 0xFFE6F6F1;
-    private static final int AMBER = 0xFF96590F;
-    private static final int SOFT_AMBER = 0xFFFFF6E2;
+    private static final int INK = ui_theme.INK;
+    private static final int MUTED = ui_theme.MUTED;
+    private static final int TEAL = ui_theme.ACCENT;
+    private static final int BACKGROUND = ui_theme.PAPER;
+    private static final int BORDER = ui_theme.BORDER;
+    private static final int SOFT_TEAL = ui_theme.SOFT_GREEN;
+    private static final int AMBER = ui_theme.WARNING;
+    private static final int SOFT_AMBER = ui_theme.SOFT_YELLOW;
     private static final int MODE_ID_BASE = 4100;
     private static final int PRESET_TEAM = 0;
     private static final int PRESET_TYPESAFE = 1;
@@ -71,6 +70,7 @@ public final class ModelSettingsActivity extends Activity {
     private boolean destroyed;
     private boolean storageUnavailable;
     private boolean teamKeyNeedsReview;
+    private int sectionIndex;
     private RadioGroup modes;
     private Switch remoteSwitch;
     private Button officialButton;
@@ -146,7 +146,7 @@ public final class ModelSettingsActivity extends Activity {
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(BACKGROUND);
+        scroll.setBackground(ui_theme.paper(this));
         scroll.setVerticalScrollBarEnabled(false);
         scroll.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
@@ -162,7 +162,8 @@ public final class ModelSettingsActivity extends Activity {
         FrameLayout frame = new FrameLayout(this);
         scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout page = column();
-        page.setPadding(dp(20), dp(22), dp(20), dp(28));
+        page.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
+                dp(ui_theme.PAGE_MARGIN), dp(32));
         int width = getResources().getDisplayMetrics().widthPixels;
         frame.addView(page, new FrameLayout.LayoutParams(width > dp(720) ? dp(720) : -1,
                 -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
@@ -170,7 +171,7 @@ public final class ModelSettingsActivity extends Activity {
         back.setOnClickListener(view -> finish());
         page.addView(back, fullWidth());
         space(page, 22);
-        page.addView(text("模型与三路对照", 28, INK, true));
+        page.addView(text("模型与三路对照", ui_theme.TITLE_SP, INK, true));
         space(page, 8);
         page.addView(text("统一使用 Jev SystemOne。先选择服务预设与模型，保存后用合成消息测试；预设不含密钥。", 14, MUTED, false));
         space(page, 22);
@@ -179,7 +180,7 @@ public final class ModelSettingsActivity extends Activity {
         makeProfileCard(page);
         makeTestCard(page);
         TextView note = text("保存任何模型配置都会关闭自动清除。未保存的编辑在离开页面或旋转屏幕后丢弃；密钥不会写入页面恢复状态。", 12, MUTED, false);
-        note.setGravity(Gravity.CENTER);
+        note.setGravity(Gravity.START);
         page.addView(note);
         setContentView(scroll);
         scroll.requestApplyInsets();
@@ -207,7 +208,7 @@ public final class ModelSettingsActivity extends Activity {
 
     private void makeStrategyCard(LinearLayout parent) {
         LinearLayout card = card(parent);
-        card.addView(text("01  判断策略", 17, INK, true));
+        card.addView(text("01  判断策略", ui_theme.SECTION_SP, INK, true));
         space(card, 10);
         modes = new RadioGroup(this);
         modes.setOrientation(RadioGroup.VERTICAL);
@@ -260,6 +261,7 @@ public final class ModelSettingsActivity extends Activity {
         remoteSwitch.setPadding(0, dp(8), 0, dp(8));
         remoteSwitch.setShowText(false);
         remoteSwitch.setSaveEnabled(false);
+        ui_theme.toggle(remoteSwitch);
         remoteSwitch.setOnCheckedChangeListener((button, checked) -> markDirty());
         card.addView(remoteSwitch, fullWidth());
         card.addView(text("默认关闭，修改开关后需保存才生效。模型策略下关闭并保存后，将保留通知且不发新请求，不会回退到关键词清除；已发出的请求无法收回。关键词策略始终在本机处理。", 12, MUTED, false));
@@ -267,7 +269,7 @@ public final class ModelSettingsActivity extends Activity {
 
     private void makeProfileCard(LinearLayout parent) {
         LinearLayout card = card(parent);
-        card.addView(text("02  服务配置", 17, INK, true));
+        card.addView(text("02  服务配置", ui_theme.SECTION_SP, INK, true));
         space(card, 8);
         card.addView(text("默认三路为团队 1052 的微调版 / 原版 / 官方模型。1052 的四个模型共用一份平台 key；其他服务使用各自的 key。", 13, MUTED, false));
         space(card, 8);
@@ -362,7 +364,7 @@ public final class ModelSettingsActivity extends Activity {
 
     private void makeTestCard(LinearLayout parent) {
         LinearLayout card = card(parent);
-        card.addView(text("03  单路连接测试", 17, INK, true));
+        card.addView(text("03  单路连接测试", ui_theme.SECTION_SP, INK, true));
         space(card, 10);
         card.addView(text("只测试上方正在编辑的这一份配置。点击测试会单独发送下方固定合成消息，不读取真实通知；允许在远程处理开关关闭时测试。", 13, MUTED, false));
         space(card, 12);
@@ -816,6 +818,7 @@ public final class ModelSettingsActivity extends Activity {
         box.setText(title);
         box.setTextSize(14);
         box.setTextColor(INK);
+        box.setButtonTintList(android.content.res.ColorStateList.valueOf(TEAL));
         box.setMinHeight(dp(44));
         box.setSaveEnabled(false);
         box.setOnCheckedChangeListener((button, checked) -> markDirty());
@@ -829,7 +832,7 @@ public final class ModelSettingsActivity extends Activity {
         space(parent, 7);
         EditText field = new EditText(this);
         field.setTextColor(INK);
-        field.setHintTextColor(0xFF85939E);
+        field.setHintTextColor(MUTED);
         field.setTextSize(14);
         field.setHint(hint);
         field.setContentDescription(label);
@@ -837,8 +840,7 @@ public final class ModelSettingsActivity extends Activity {
         field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                 | (password ? InputType.TYPE_TEXT_VARIATION_PASSWORD
                 : uri ? InputType.TYPE_TEXT_VARIATION_URI : InputType.TYPE_TEXT_VARIATION_NORMAL));
-        field.setPadding(dp(12), dp(12), dp(12), dp(12));
-        field.setBackground(background(BACKGROUND, 10, BORDER));
+        ui_theme.input(field);
         field.setSaveEnabled(false);
         field.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         field.addTextChangedListener(new TextWatcher() {
@@ -853,10 +855,11 @@ public final class ModelSettingsActivity extends Activity {
 
     private LinearLayout card(LinearLayout parent) {
         LinearLayout view = column();
-        view.setPadding(dp(18), dp(18), dp(18), dp(18));
-        view.setBackground(background(Color.WHITE, 18, BORDER));
+        int index = sectionIndex++;
+        ui_theme.section(view, index == 1 ? ui_theme.SHEET
+                : index == 2 ? ui_theme.SOFT_YELLOW : Color.TRANSPARENT);
         LinearLayout.LayoutParams params = fullWidth();
-        params.bottomMargin = dp(16);
+        params.bottomMargin = dp(ui_theme.SECTION_GAP);
         parent.addView(view, params);
         return view;
     }
@@ -864,30 +867,12 @@ public final class ModelSettingsActivity extends Activity {
     private Button button(String label, boolean primary) {
         Button view = new Button(this);
         view.setText(label);
-        view.setAllCaps(false);
-        view.setTextColor(primary ? Color.WHITE : TEAL);
-        view.setTextSize(14);
-        view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        view.setBackground(background(primary ? TEAL : SOFT_TEAL, 11, 0));
-        view.setBackgroundTintList(null);
-        view.setPadding(dp(12), dp(12), dp(12), dp(12));
-        view.setMinHeight(dp(48));
-        view.setMinimumHeight(dp(48));
-        view.setStateListAnimator(null);
+        ui_theme.button(view, primary);
         return view;
     }
 
     private TextView text(String value, float size, int color, boolean bold) {
-        TextView view = new TextView(this);
-        view.setText(value);
-        view.setTextSize(size);
-        view.setTextColor(color);
-        view.setIncludeFontPadding(false);
-        view.setLineSpacing(dp(3), 1f);
-        if (bold) {
-            view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        }
-        return view;
+        return ui_theme.text(this, value, size, color, bold);
     }
 
     private LinearLayout column() {
@@ -897,13 +882,7 @@ public final class ModelSettingsActivity extends Activity {
     }
 
     private GradientDrawable background(int fill, int radius, int stroke) {
-        GradientDrawable result = new GradientDrawable();
-        result.setColor(fill);
-        result.setCornerRadius(dp(radius));
-        if (stroke != 0) {
-            result.setStroke(dp(1), stroke);
-        }
-        return result;
+        return ui_theme.shape(this, fill, radius, stroke);
     }
 
     private void space(LinearLayout parent, int height) {

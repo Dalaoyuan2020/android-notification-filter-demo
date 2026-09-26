@@ -2,7 +2,6 @@ package com.example.notificationdemo.filter;
 
 import android.app.Activity;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
@@ -27,11 +26,12 @@ import java.util.Locale;
 
 /** Inspect real short-term observations and explicitly opt into optional transports. */
 public final class AttentionActivity extends Activity {
-    private static final int INK = 0xFF182D43;
-    private static final int MUTED = 0xFF617181;
-    private static final int TEAL = 0xFF007372;
-    private static final int BG = 0xFFF4F7FA;
-    private static final int BORDER = 0xFFDFE7ED;
+    private static final int INK = ui_theme.INK;
+    private static final int MUTED = ui_theme.MUTED;
+    private static final int TEAL = ui_theme.ACCENT;
+    private static final int BG = ui_theme.PAPER;
+    private static final int BORDER = ui_theme.BORDER;
+    private int sectionIndex;
     private EditText halfLife;
     private EditText weight;
     private EditText serviceUrl;
@@ -56,7 +56,7 @@ public final class AttentionActivity extends Activity {
             getWindow().setDecorFitsSystemWindows(false);
         }
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(BG);
+        scroll.setBackground(ui_theme.paper(this));
         scroll.setFillViewport(true);
         scroll.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
@@ -72,7 +72,8 @@ public final class AttentionActivity extends Activity {
         FrameLayout frame = new FrameLayout(this);
         scroll.addView(frame, new ScrollView.LayoutParams(-1, -2));
         LinearLayout page = column();
-        page.setPadding(dp(20), dp(22), dp(20), dp(28));
+        page.setPadding(dp(ui_theme.PAGE_MARGIN), dp(ui_theme.PAGE_TOP),
+                dp(ui_theme.PAGE_MARGIN), dp(32));
         int available = getResources().getDisplayMetrics().widthPixels;
         frame.addView(page, new FrameLayout.LayoutParams(available > dp(720) ? dp(720) : -1,
                 -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
@@ -80,7 +81,7 @@ public final class AttentionActivity extends Activity {
         back.setOnClickListener(view -> finish());
         page.addView(back, fullWidth());
         space(page, 22);
-        page.addView(text("短时注意力", 28, INK, true));
+        page.addView(text("短时注意力", ui_theme.TITLE_SP, INK, true));
         space(page, 8);
         page.addView(text("从真实点击、手动划除和持续未处理的通知学习，随时间衰减。不会把 App 自动清除当作您的偏好。", 14, MUTED, false));
         space(page, 20);
@@ -104,6 +105,7 @@ public final class AttentionActivity extends Activity {
         transport.addView(text("默认不上传正文。勾选后可能发送真实通知内容；请先用合成样本。地址与 Token 不会替代模型配置，手机的 localhost 也不是电脑地址。", 12, MUTED, false));
         space(transport, 14);
         Button save = button("保存注意力设置并关闭自动清除");
+        ui_theme.button(save, true);
         save.setOnClickListener(view -> saveSettings(save));
         transport.addView(save, fullWidth());
         space(transport, 10);
@@ -229,12 +231,13 @@ public final class AttentionActivity extends Activity {
 
     private LinearLayout card(LinearLayout parent, String title) {
         LinearLayout card = column();
-        card.setPadding(dp(18), dp(18), dp(18), dp(18));
-        card.setBackground(background(Color.WHITE, 18, BORDER));
+        int index = sectionIndex++;
+        ui_theme.section(card, index == 0 ? ui_theme.SOFT_GREEN
+                : index == 2 ? ui_theme.SHEET : Color.TRANSPARENT);
         LinearLayout.LayoutParams params = fullWidth();
-        params.bottomMargin = dp(16);
+        params.bottomMargin = dp(ui_theme.SECTION_GAP);
         parent.addView(card, params);
-        card.addView(text(title, 17, INK, true));
+        card.addView(text(title, ui_theme.SECTION_SP, INK, true));
         space(card, 10);
         return card;
     }
@@ -253,8 +256,7 @@ public final class AttentionActivity extends Activity {
                 | (secret ? InputType.TYPE_TEXT_VARIATION_PASSWORD : InputType.TYPE_TEXT_VARIATION_NORMAL));
         field.setSaveEnabled(false);
         field.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
-        field.setPadding(dp(12), dp(12), dp(12), dp(12));
-        field.setBackground(background(BG, 10, BORDER));
+        ui_theme.input(field);
         parent.addView(field, fullWidth());
         space(parent, 8);
         return field;
@@ -268,6 +270,7 @@ public final class AttentionActivity extends Activity {
         toggle.setMinHeight(dp(54));
         toggle.setShowText(false);
         toggle.setSaveEnabled(false);
+        ui_theme.toggle(toggle);
         parent.addView(toggle, fullWidth());
         return toggle;
     }
@@ -275,26 +278,12 @@ public final class AttentionActivity extends Activity {
     private Button button(String title) {
         Button button = new Button(this);
         button.setText(title);
-        button.setTextSize(14);
-        button.setTextColor(TEAL);
-        button.setAllCaps(false);
-        button.setMinHeight(dp(48));
-        button.setPadding(dp(12), dp(12), dp(12), dp(12));
-        button.setBackground(background(0xFFE6F6F1, 11, 0));
-        button.setBackgroundTintList(null);
+        ui_theme.button(button, false);
         return button;
     }
 
     private TextView text(String value, int size, int color, boolean bold) {
-        TextView text = new TextView(this);
-        text.setText(value);
-        text.setTextSize(size);
-        text.setTextColor(color);
-        text.setLineSpacing(dp(3), 1);
-        if (bold) {
-            text.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-        }
-        return text;
+        return ui_theme.text(this, value, size, color, bold);
     }
 
     private LinearLayout column() {
@@ -304,13 +293,7 @@ public final class AttentionActivity extends Activity {
     }
 
     private GradientDrawable background(int color, int radius, int stroke) {
-        GradientDrawable shape = new GradientDrawable();
-        shape.setColor(color);
-        shape.setCornerRadius(dp(radius));
-        if (stroke != 0) {
-            shape.setStroke(dp(1), stroke);
-        }
-        return shape;
+        return ui_theme.shape(this, color, radius, stroke);
     }
 
     private void space(LinearLayout parent, int height) {
