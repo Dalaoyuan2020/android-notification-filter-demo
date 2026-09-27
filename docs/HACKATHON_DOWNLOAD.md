@@ -4,9 +4,9 @@
 
 ## 1. 下载与安装
 
-[打开下载页](https://attention-design-v040.rare-pixie-7903.chatgpt.site/download.html)，或扫描二维码：
+[打开下载页](https://hhu.winnielyu.com/keep-attention/download.html)，或扫描二维码：
 
-<a href="https://attention-design-v040.rare-pixie-7903.chatgpt.site/download.html"><img src="assets/keep_attention_download_qr.png" alt="扫码打开 Keep Attention 下载页" width="220"></a>
+<a href="https://hhu.winnielyu.com/keep-attention/download.html"><img src="assets/keep_attention_download_qr.png" alt="扫码打开 Keep Attention 下载页" width="220"></a>
 
 | 下载 | 安装后找哪个图标 | 版本与作用 |
 |---|---|---|

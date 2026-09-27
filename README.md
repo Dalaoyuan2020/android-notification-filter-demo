@@ -8,9 +8,9 @@
 
 ## 扫码下载与三分钟体验
 
-[打开手机端下载页](https://attention-design-v040.rare-pixie-7903.chatgpt.site/download.html)，或扫描下方二维码。微信内浏览器无法下载时，请通过菜单在系统浏览器中打开。
+[打开手机端下载页](https://hhu.winnielyu.com/keep-attention/download.html)，或扫描下方二维码。微信内浏览器无法下载时，请通过菜单在系统浏览器中打开。
 
-<a href="https://attention-design-v040.rare-pixie-7903.chatgpt.site/download.html"><img src="docs/assets/keep_attention_download_qr.png" alt="扫码打开 Keep Attention 下载页" width="180"></a>
+<a href="https://hhu.winnielyu.com/keep-attention/download.html"><img src="docs/assets/keep_attention_download_qr.png" alt="扫码打开 Keep Attention 下载页" width="180"></a>
 
 | 安装包 | 作用与桌面名称 | APK 版本 | 下载 |
 |---|---|---|---|
