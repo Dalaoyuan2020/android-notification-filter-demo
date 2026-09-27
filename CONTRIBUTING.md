@@ -1,18 +1,18 @@
 # 协作开发与测试
 
-## rui460 从这里开始
+## 从这里开始
 
-已向 GitHub 账号 **rui460** 发出本私有仓库的 **Write** 协作者邀请。请登录该账号打开 [接受仓库邀请](https://github.com/Dalaoyuan2020/android-notification-filter-demo/invitations)。邀请未接受前，仓库和下载页可能显示 404。Write 权限允许推送开发分支、提交代码和管理测试 Issue；不需要仓库管理员权限。
+本仓库已公开并采用 [MIT License](LICENSE)，保留完整开发提交历史。任何人都可浏览、下载和 Fork；已有 Write 权限的团队成员可推送开发分支，其他贡献者请从自己的 Fork 提交 Pull Request。
 
-接受后先做以下三件事：
+开始前先做以下三件事：
 
-1. 按 [真机测试指南](docs/PHONE_TESTING.md) 下载 Release 中的两个 APK，完成关键词基线测试。
-2. v0.3.0 按[三路模型配置指南](docs/MODEL_TESTING.md)核对 TypeSafe／Bocha／自训中转、协议及各自凭据，再做[注意力演示](docs/ATTENTION_DEMO.md)。官方预设已明确，实际凭据未联调或自训端点未配置时，分别标记，不要当成已接通。
+1. 按 [扫码体验指南](docs/HACKATHON_DOWNLOAD.md) 下载主程序 0.4.0 与测试发送器 0.3.0，完成关键词观察体验；完整验收见 [手机测试指南](docs/PHONE_TESTING.md)。
+2. 当前 Jev 配置以 [README](README.md#三条模型路线) 为准，再做[注意力演示](docs/ATTENTION_DEMO.md)。实际凭据未联调或自训端点未配置时，分别标记，不要当成已接通。
 3. 在 [手机实测反馈](https://github.com/Dalaoyuan2020/android-notification-filter-demo/issues/new/choose) 提交机型、版本、结果和复现步骤。只使用合成通知文本，截图隐藏私人通知；不要提交 API Key。
 
 ## 修改代码
 
-建议每项修改建立独立分支，提交 Pull Request 便于对照测试。无需 fork 私有仓库：
+建议每项修改建立独立分支，提交 Pull Request 便于对照测试。团队成员可以克隆原仓库；外部贡献者请先 Fork，再克隆自己的副本：
 
 ```powershell
 git clone https://github.com/Dalaoyuan2020/android-notification-filter-demo.git
